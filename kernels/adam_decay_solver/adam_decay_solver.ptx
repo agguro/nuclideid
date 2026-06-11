@@ -1,0 +1,98 @@
+.version 7.0
+.target sm_61
+.address_size 64
+
+.visible .entry learnDecayK(
+    .param .u64 t_ptr,
+    .param .u64 y_ptr,
+    .param .u64 k_out,
+    .param .u32 num_samples
+)
+{
+    // Register hernoemd van %tid naar %gtid om conflicten met het systeemregister te voorkomen
+    .reg .u32 %gtid, %idx, %N;
+    .reg .u64 %t_base, %y_base, %out_base, %addr_t, %addr_y, %idx_64;
+    .reg .f32 %t_val, %y_val, %y_pred, %k_val, %grad, %diff;
+    .reg .f32 %m, %v, %alpha, %beta1, %beta2, %epsilon;
+    .reg .pred %p_valid;
+
+    ld.param.u64 %t_base,    [t_ptr];
+    ld.param.u64 %y_base,    [y_ptr];
+    ld.param.u64 %out_base,  [k_out];
+    ld.param.u32 %N,         [num_samples];
+
+    // Nu kan de loepzuivere standaardnotatie weer zonder dat ptxas overstag gaat!
+    .reg .u32 %ltid, %bid, %bdim;
+    mov.u32 %ltid, %tid.x;
+    mov.u32 %bid, %ctaid.x;
+    mov.u32 %bdim, %ntid.x;
+    mad.lo.u32 %gtid, %bid, %bdim, %ltid;
+
+    setp.ge.u32 %p_valid, %gtid, %N;
+    @%p_valid bra EXIT;
+
+    mov.f32 %k_val,   0.5;
+    mov.f32 %m,       0.0;
+    mov.f32 %v,       0.0;
+    mov.f32 %alpha,   0.01;
+    mov.f32 %beta1,   0.9;
+    mov.f32 %beta2,   0.999;
+    mov.f32 %epsilon, 0.00000001;
+
+    .reg .u32 %epoch;
+    mov.u32 %epoch, 0;
+
+EPOCH_LOOP:
+    shl.b32 %idx, %gtid, 2;
+    cvt.u64.u32 %idx_64, %idx;       
+    add.u64 %addr_t, %t_base, %idx_64;
+    add.u64 %addr_y, %y_base, %idx_64;
+
+    ld.global.f32 %t_val, [%addr_t];
+    ld.global.f32 %y_val, [%addr_y];
+
+    .reg .f32 %pow, %neg_k, %log2e;
+    mov.f32 %log2e, 1.44269504;
+    neg.f32 %neg_k, %k_val;
+    mul.f32 %pow, %neg_k, %t_val;
+    mul.f32 %pow, %pow, %log2e;
+    ex2.approx.f32 %y_pred, %pow;
+
+    sub.f32 %diff, %y_val, %y_pred;
+    mul.f32 %grad, %diff, %y_pred;
+    mul.f32 %grad, %grad, %t_val;
+    mul.f32 %grad, %grad, -2.0;
+
+    .reg .f32 %om_beta1, %om_beta2;
+    sub.f32 %om_beta1, 1.0, %beta1;
+    sub.f32 %om_beta2, 1.0, %beta2;
+    
+    mul.f32 %m, %m, %beta1;
+    mad.rn.f32 %m, %om_beta1, %grad, %m; 
+
+    .reg .f32 %grad_sq;
+    mul.f32 %grad_sq, %grad, %grad;
+    mul.f32 %v, %v, %beta2;
+    mad.rn.f32 %v, %om_beta2, %grad_sq, %v;
+
+    .reg .f32 %denom;
+    sqrt.approx.f32 %denom, %v;
+    add.f32 %denom, %denom, %epsilon;
+    div.approx.f32 %denom, %m, %denom;
+    
+    .reg .f32 %neg_alpha;
+    neg.f32 %neg_alpha, %alpha;      
+    mad.rn.f32 %k_val, %denom, %neg_alpha, %k_val; 
+    abs.f32 %k_val, %k_val;
+
+    add.u32 %epoch, %epoch, 1;        
+    setp.lt.u32 %p_valid, %epoch, 5000;
+    @%p_valid bra EPOCH_LOOP;
+
+    setp.eq.u32 %p_valid, %gtid, 0;
+    @%p_valid st.global.f32 [%out_base], %k_val;
+
+EXIT:
+    ret;
+}
+
