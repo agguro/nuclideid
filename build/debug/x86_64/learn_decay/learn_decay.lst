@@ -1,0 +1,599 @@
+GAS LISTING learn_decay.s 			page 1
+
+
+   1              	.global _start
+   2              	
+   3              	.section .rodata
+   4 0000 69736F74 	    db_file:     .string "isotopes.db"
+   4      6F706573 
+   4      2E646200 
+   5 000c 64617461 	    data_file:   .string "data.bin"
+   5      2E62696E 
+   5      00
+   6 0015 6164616D 	    ptx_file:    .string "adam_decay_solver.cubin"
+   6      5F646563 
+   6      61795F73 
+   6      6F6C7665 
+   6      722E6375 
+   7 002d 6C656172 	    func_name:   .string "learnDecayK"
+   7      6E446563 
+   7      61794B00 
+   8              	    
+   9 0039 1B5B313B 	    fmt_start:   .ascii "\033[1;34m[nuclideid]\033[0m Starting standalone hardware inference...\n"
+   9      33346D5B 
+   9      6E75636C 
+   9      69646569 
+   9      645D1B5B 
+  10 007a 41000000 	    fmt_start_l: .long . - fmt_start
+  11 007e 1B5B313B 	    fmt_match:   .ascii "\033[1;32m[IDENTIFICATIE GESLAAGD]\033[0m\n"
+  11      33326D5B 
+  11      4944454E 
+  11      54494649 
+  11      43415449 
+  12 00a2 24000000 	    fmt_match_l: .long . - fmt_match
+  13 00a6 20205072 	    fmt_z:       .ascii "  Protonen (Z): "
+  13      6F746F6E 
+  13      656E2028 
+  13      5A293A20 
+  14 00b6 10000000 	    fmt_z_l:     .long . - fmt_z
+  15 00ba 20204D61 	    fmt_a:       .ascii "  Massa (A):    "
+  15      73736120 
+  15      2841293A 
+  15      20202020 
+  16 00ca 10000000 	    fmt_a_l:     .long . - fmt_a
+  17 00ce 20204E75 	    fmt_name:    .ascii "  Nuclide:      "
+  17      636C6964 
+  17      653A2020 
+  17      20202020 
+  18 00de 10000000 	    fmt_name_l:  .long . - fmt_name
+  19 00e2 0A       	    fmt_nl:      .ascii "\n"
+  20              	
+  21 00e3 1B5B313B 	    fmt_nocuda:   .ascii "\033[1;31m[ERROR]\033[0m No NVIDIA GPU or driver detected on this system.
+  21      33316D5B 
+  21      4552524F 
+  21      525D1B5B 
+  21      306D204E 
+  22 0127 44000000 	    fmt_nocuda_l: .long . - fmt_nocuda
+  23              	
+  24              	.section .data
+  25              	    .align 8
+  26 0000 00000000 	    cu_ctx:       .quad 0
+GAS LISTING learn_decay.s 			page 2
+
+
+  26      00000000 
+  27 0008 00000000 	    cu_device:    .long 0
+  28 000c 00000000 	    cu_module:    .quad 0
+  28      00000000 
+  29 0014 00000000 	    cu_function:  .quad 0
+  29      00000000 
+  30              	    
+  31 001c 00000000 	    d_t_ptr:      .quad 0
+  31      00000000 
+  32 0024 00000000 	    d_y_ptr:      .quad 0
+  32      00000000 
+  33 002c 00000000 	    d_k_out:      .quad 0
+  33      00000000 
+  34              	
+  35 0034 00000000 	    .align 8
+  36              	    kernel_params:
+  37 0038 00000000 	        p_t:      .quad 0
+  37      00000000 
+  38 0040 00000000 	        p_y:      .quad 0
+  38      00000000 
+  39 0048 00000000 	        p_k:      .quad 0
+  39      00000000 
+  40 0050 00040000 	        p_num:    .long 1024
+  41 0054 00000000 	    .align 8
+  42 0058 00000000 	    kernel_args:  .quad kernel_params, kernel_params+8, kernel_params+12, kernel_params+16
+  42      00000000 
+  42      00000000 
+  42      00000000 
+  42      00000000 
+  43              	
+  44 0078 00000000 	    fd_db:        .quad 0
+  44      00000000 
+  45 0080 00000000 	    fd_data:      .quad 0
+  45      00000000 
+  46 0088 00000000 	    ptr_db:       .quad 0
+  46      00000000 
+  47 0090 00000000 	    ptr_data:     .quad 0
+  47      00000000 
+  48              	    
+  49              	    .align 8
+  50 0098 00000000 	    stat_buf:     .zero 144
+  50      00000000 
+  50      00000000 
+  50      00000000 
+  50      00000000 
+  51              	
+  52              	    .align 4
+  53 0128 00000000 	    learned_k:    .float 0.0
+  54 012c 00000000 	    ascii_buf:    .zero 32
+  54      00000000 
+  54      00000000 
+  54      00000000 
+  54      00000000 
+  55              	
+  56              	.section .text
+  57              	_start:
+  58              	    # Garandeer strikte x86_64 ABI stack-alignment
+GAS LISTING learn_decay.s 			page 3
+
+
+  59 0000 55       	    pushq   %rbp
+  60 0001 4889E5   	    movq    %rsp, %rbp
+  61 0004 4883E4F0 	    andq    $-16, %rsp
+  62              	
+  63              	    # ==========================================
+  64              	    # CUDA HARDWARE DETECTION & INITIALIZATION
+  65              	    # ==========================================
+  66 0008 31FF     	    xorl    %edi, %edi
+  67 000a E8000000 	    call    cuInit@PLT
+  67      00
+  68 000f 85C0     	    testl   %eax, %eax
+  69 0011 0F852403 	    jnz     .L_cuda_error
+  69      0000
+  70              	
+  71              	    # Meld de start van de runtime-engine via sys_write
+  72 0017 B8010000 	    movl    $1, %eax
+  72      00
+  73 001c BF010000 	    movl    $1, %edi
+  73      00
+  74 0021 488D3500 	    leaq    fmt_start(%rip), %rsi
+  74      000000
+  75 0028 8B150000 	    movl    fmt_start_l(%rip), %edx
+  75      0000
+  76 002e 0F05     	    syscall
+  77              	
+  78              	    # ==========================================
+  79              	    # 1. DOUBLE ZERO-COPY FILE MMAP
+  80              	    # ==========================================
+  81              	    # Open isotopes.db
+  82 0030 B8020000 	    movl    $2, %eax              
+  82      00
+  83 0035 488D3D00 	    leaq    db_file(%rip), %rdi
+  83      000000
+  84 003c BE000000 	    movl    $0, %esi              
+  84      00
+  85 0041 0F05     	    syscall
+  86 0043 48890500 	    movq    %rax, fd_db(%rip)
+  86      000000
+  87              	
+  88              	    # Map isotopes.db in virtuele adresruimte (128 KB)
+  89 004a B8090000 	    movl    $9, %eax              
+  89      00
+  90 004f 4831FF   	    xorq    %rdi, %rdi
+  91 0052 48C7C600 	    movq    $131072, %rsi         
+  91      000200
+  92 0059 BA010000 	    movl    $1, %edx              # PROT_READ
+  92      00
+  93 005e 41BA0200 	    movl    $2, %r10d             # MAP_PRIVATE
+  93      0000
+  94 0064 4C8B0500 	    movq    fd_db(%rip), %r8
+  94      000000
+  95 006b 4D31C9   	    xorq    %r9, %r9
+  96 006e 0F05     	    syscall
+  97 0070 48890500 	    movq    %rax, ptr_db(%rip)
+  97      000000
+  98              	
+  99              	    # Open data.bin
+GAS LISTING learn_decay.s 			page 4
+
+
+ 100 0077 B8020000 	    movl    $2, %eax              
+ 100      00
+ 101 007c 488D3D00 	    leaq    data_file(%rip), %rdi
+ 101      000000
+ 102 0083 BE000000 	    movl    $0, %esi              
+ 102      00
+ 103 0088 0F05     	    syscall
+ 104 008a 48890500 	    movq    %rax, fd_data(%rip)
+ 104      000000
+ 105              	
+ 106              	    # Map data.bin in virtuele adresruimte (8 KB)
+ 107 0091 B8090000 	    movl    $9, %eax              
+ 107      00
+ 108 0096 4831FF   	    xorq    %rdi, %rdi
+ 109 0099 48C7C600 	    movq    $8192, %rsi           
+ 109      200000
+ 110 00a0 BA010000 	    movl    $1, %edx              # PROT_READ
+ 110      00
+ 111 00a5 41BA0200 	    movl    $2, %r10d             # MAP_PRIVATE
+ 111      0000
+ 112 00ab 4C8B0500 	    movq    fd_data(%rip), %r8
+ 112      000000
+ 113 00b2 4D31C9   	    xorq    %r9, %r9
+ 114 00b5 0F05     	    syscall
+ 115 00b7 48890500 	    movq    %rax, ptr_data(%rip)
+ 115      000000
+ 116              	
+ 117              	    # ==========================================
+ 118              	    # 2. CUDA EXECUTION SYSTEM CONTEXT SETUP
+ 119              	    # ==========================================
+ 120 00be 488D3D00 	    leaq    cu_device(%rip), %rdi
+ 120      000000
+ 121 00c5 31F6     	    xorl    %esi, %esi
+ 122 00c7 E8000000 	    call    cuDeviceGet@PLT
+ 122      00
+ 123              	    
+ 124 00cc 488D3D00 	    leaq    cu_ctx(%rip), %rdi
+ 124      000000
+ 125 00d3 31F6     	    xorl    %esi, %esi
+ 126 00d5 8B150000 	    movl    cu_device(%rip), %edx
+ 126      0000
+ 127 00db E8000000 	    call    cuCtxCreate@PLT
+ 127      00
+ 128              	
+ 129              	    # Vraag GPU-geheugen aan via the Driver API
+ 130 00e0 488D3D00 	    leaq    d_t_ptr(%rip), %rdi
+ 130      000000
+ 131 00e7 BE001000 	    movl    $4096, %esi
+ 131      00
+ 132 00ec E8000000 	    call    cuMemAlloc@PLT
+ 132      00
+ 133              	    
+ 134 00f1 488D3D00 	    leaq    d_y_ptr(%rip), %rdi
+ 134      000000
+ 135 00f8 BE001000 	    movl    $4096, %esi
+ 135      00
+ 136 00fd E8000000 	    call    cuMemAlloc@PLT
+GAS LISTING learn_decay.s 			page 5
+
+
+ 136      00
+ 137              	    
+ 138 0102 488D3D00 	    leaq    d_k_out(%rip), %rdi
+ 138      000000
+ 139 0109 BE040000 	    movl    $4, %esi
+ 139      00
+ 140 010e E8000000 	    call    cuMemAlloc@PLT
+ 140      00
+ 141              	
+ 142              	    # Sluis de gemmapte buffers direct over naar de videokaart (HtoD)
+ 143 0113 488B3D00 	    movq    d_t_ptr(%rip), %rdi
+ 143      000000
+ 144 011a 488B3500 	    movq    ptr_data(%rip), %rsi   
+ 144      000000
+ 145 0121 BA001000 	    movl    $4096, %edx
+ 145      00
+ 146 0126 E8000000 	    call    cuMemcpyHtoD@PLT
+ 146      00
+ 147              	
+ 148 012b 488B3D00 	    movq    d_y_ptr(%rip), %rdi
+ 148      000000
+ 149 0132 488B3500 	    movq    ptr_data(%rip), %rsi
+ 149      000000
+ 150 0139 4881C600 	    addq    $4096, %rsi                   
+ 150      100000
+ 151 0140 BA001000 	    movl    $4096, %edx
+ 151      00
+ 152 0145 E8000000 	    call    cuMemcpyHtoD@PLT
+ 152      00
+ 153              	
+ 154              	    # Laad de AOT-gecompileerde cubin module
+ 155 014a 488D3D00 	    leaq    cu_module(%rip), %rdi
+ 155      000000
+ 156 0151 488D3500 	    leaq    ptx_file(%rip), %rsi
+ 156      000000
+ 157 0158 E8000000 	    call    cuModuleLoad@PLT
+ 157      00
+ 158              	    
+ 159 015d 488D3D00 	    leaq    cu_function(%rip), %rdi
+ 159      000000
+ 160 0164 488B3500 	    movq    cu_module(%rip), %rsi
+ 160      000000
+ 161 016b 488D1500 	    leaq    func_name(%rip), %rdx
+ 161      000000
+ 162 0172 E8000000 	    call    cuModuleGetFunction@PLT
+ 162      00
+ 163              	
+ 164              	    # Update de parameter pointer maps in .data
+ 165 0177 488B0500 	    movq    d_t_ptr(%rip), %rax
+ 165      000000
+ 166 017e 48890500 	    movq    %rax, kernel_params(%rip)
+ 166      000000
+ 167 0185 488B0500 	    movq    d_y_ptr(%rip), %rax
+ 167      000000
+ 168 018c 48890500 	    movq    %rax, (kernel_params+8)(%rip)
+ 168      000000
+ 169 0193 488B0500 	    movq    d_k_out(%rip), %rax
+GAS LISTING learn_decay.s 			page 6
+
+
+ 169      000000
+ 170 019a 48890500 	    movq    %rax, (kernel_params+16)(%rip)
+ 170      000000
+ 171              	
+ 172              	    # Activeer de videokaart-threads (Grid: 4, Block: 256)
+ 173 01a1 488B3D00 	    movq    cu_function(%rip), %rdi
+ 173      000000
+ 174 01a8 BE040000 	    movl    $4, %esi              
+ 174      00
+ 175 01ad BA010000 	    movl    $1, %edx
+ 175      00
+ 176 01b2 B9010000 	    movl    $1, %ecx
+ 176      00
+ 177 01b7 41B80001 	    movl    $256, %r8d            
+ 177      0000
+ 178 01bd 41B90100 	    movl    $1, %r9d
+ 178      0000
+ 179 01c3 6A00     	    pushq   $0
+ 180 01c5 6A00     	    pushq   $0
+ 181 01c7 488D0500 	    leaq    kernel_args(%rip), %rax
+ 181      000000
+ 182 01ce 50       	    pushq   %rax
+ 183 01cf 6A00     	    pushq   $0
+ 184 01d1 6A01     	    pushq   $1
+ 185 01d3 E8000000 	    call    cuLaunchKernel@PLT
+ 185      00
+ 186 01d8 4883C428 	    addq    $40, %rsp
+ 187              	
+ 188 01dc E8000000 	    call    cuCtxSynchronize@PLT
+ 188      00
+ 189              	
+ 190              	    # Haal het resultaat terug van de GPU naar RAM
+ 191 01e1 488D3D00 	    leaq    learned_k(%rip), %rdi
+ 191      000000
+ 192 01e8 488B3500 	    movq    d_k_out(%rip), %rsi
+ 192      000000
+ 193 01ef BA040000 	    movl    $4, %edx
+ 193      00
+ 194 01f4 E8000000 	    call    cuMemcpyDtoH@PLT
+ 194      00
+ 195              	
+ 196              	    # ==========================================
+ 197              	    # 3. STACK-LESS CPU BINARY SEARCH
+ 198              	    # ==========================================
+ 199 01f9 F30F1005 	    movss   learned_k(%rip), %xmm0 
+ 199      00000000 
+ 200 0201 4C8B2500 	    movq    ptr_db(%rip), %r12     
+ 200      000000
+ 201              	
+ 202 0208 31DB     	    xorl    %ebx, %ebx                    # Low index = 0
+ 203 020a B93B0D00 	    movl    $3387, %ecx                   # High index = 3388 - 1
+ 203      00
+ 204              	
+ 205              	BINARY_SEARCH_LOOP:
+ 206 020f 39CB     	    cmpl    %ecx, %ebx
+ 207 0211 7F27     	    jg      FOUND_NEAREST               
+ 208              	
+GAS LISTING learn_decay.s 			page 7
+
+
+ 209 0213 89D8     	    movl    %ebx, %eax
+ 210 0215 01C8     	    addl    %ecx, %eax
+ 211 0217 D1E8     	    shrl    $1, %eax                      # Mid index
+ 212              	
+ 213 0219 89C2     	    movl    %eax, %edx
+ 214 021b C1E205   	    shll    $5, %edx                      # Mid * 32 bytes per struct
+ 215 021e 4C01E2   	    addq    %r12, %rdx                    # %rdx = Absolute pointer naar record_mid
+ 216              	
+ 217 0221 F30F100A 	    movss   (%rdx), %xmm1                 # Haal k-float op (offset 0 van struct)
+ 218              	
+ 219 0225 0F2FC1   	    comiss  %xmm1, %xmm0
+ 220 0228 740E     	    je      MATCH_EXACT                 
+ 221 022a 7706     	    ja      SEARCH_HIGHER               
+ 222              	
+ 223 022c 89C1     	    movl    %eax, %ecx
+ 224 022e FFC9     	    decl    %ecx                          # High = Mid - 1
+ 225 0230 EBDD     	    jmp     BINARY_SEARCH_LOOP
+ 226              	
+ 227              	SEARCH_HIGHER:
+ 228 0232 89C3     	    movl    %eax, %ebx
+ 229 0234 FFC3     	    incl    %ebx                          # Low = Mid + 1
+ 230 0236 EBD7     	    jmp     BINARY_SEARCH_LOOP
+ 231              	
+ 232              	MATCH_EXACT:
+ 233 0238 EB09     	    jmp     PRINT_DETERMINATION
+ 234              	
+ 235              	FOUND_NEAREST:
+ 236 023a C1E305   	    shll    $5, %ebx
+ 237 023d 4C01E3   	    addq    %r12, %rbx
+ 238 0240 4889DA   	    movq    %rbx, %rdx                    # Dichtstbijzijnde record als fallback
+ 239              	
+ 240              	    # ==========================================
+ 241              	    # 4. OUTPUT GENERATOR (PRINT RESULT)
+ 242              	    # ==========================================
+ 243              	PRINT_DETERMINATION:
+ 244 0243 4989D7   	    movq    %rdx, %r15                     
+ 245              	
+ 246 0246 B8010000 	    movl    $1, %eax
+ 246      00
+ 247 024b BF010000 	    movl    $1, %edi
+ 247      00
+ 248 0250 488D3500 	    leaq    fmt_match(%rip), %rsi
+ 248      000000
+ 249 0257 8B150000 	    movl    fmt_match_l(%rip), %edx
+ 249      0000
+ 250 025d 0F05     	    syscall
+ 251              	
+ 252 025f B8010000 	    movl    $1, %eax
+ 252      00
+ 253 0264 BF010000 	    movl    $1, %edi
+ 253      00
+ 254 0269 488D3500 	    leaq    fmt_z(%rip), %rsi
+ 254      000000
+ 255 0270 8B150000 	    movl    fmt_z_l(%rip), %edx
+ 255      0000
+ 256 0276 0F05     	    syscall
+ 257              	
+GAS LISTING learn_decay.s 			page 8
+
+
+ 258 0278 418B4708 	    movl    8(%r15), %eax                 # Z bevindt zich op offset 8
+ 259 027c E87D0000 	    call    print_uint
+ 259      00
+ 260              	
+ 261 0281 B8010000 	    movl    $1, %eax
+ 261      00
+ 262 0286 BF010000 	    movl    $1, %edi
+ 262      00
+ 263 028b 488D3500 	    leaq    fmt_a(%rip), %rsi
+ 263      000000
+ 264 0292 8B150000 	    movl    fmt_a_l(%rip), %edx
+ 264      0000
+ 265 0298 0F05     	    syscall
+ 266              	
+ 267 029a 418B4704 	    movl    4(%r15), %eax                 # A bevindt zich op offset 4
+ 268 029e E85B0000 	    call    print_uint
+ 268      00
+ 269              	
+ 270 02a3 B8010000 	    movl    $1, %eax
+ 270      00
+ 271 02a8 BF010000 	    movl    $1, %edi
+ 271      00
+ 272 02ad 488D3500 	    leaq    fmt_name(%rip), %rsi
+ 272      000000
+ 273 02b4 8B150000 	    movl    fmt_name_l(%rip), %edx
+ 273      0000
+ 274 02ba 0F05     	    syscall
+ 275              	
+ 276 02bc 498D770C 	    leaq    12(%r15), %rsi                # String start op offset 12
+ 277 02c0 31D2     	    xorl    %edx, %edx
+ 278              	LEN_LOOP:
+ 279 02c2 803C1600 	    cmpb    $0, (%rsi,%rdx)
+ 280 02c6 7405     	    je      PRINT_NAME
+ 281 02c8 48FFC2   	    incq    %rdx
+ 282 02cb EBF5     	    jmp     LEN_LOOP
+ 283              	PRINT_NAME:
+ 284 02cd B8010000 	    movl    $1, %eax
+ 284      00
+ 285 02d2 BF010000 	    movl    $1, %edi
+ 285      00
+ 286 02d7 0F05     	    syscall
+ 287              	
+ 288 02d9 B8010000 	    movl    $1, %eax
+ 288      00
+ 289 02de BF010000 	    movl    $1, %edi
+ 289      00
+ 290 02e3 488D3500 	    leaq    fmt_nl(%rip), %rsi
+ 290      000000
+ 291 02ea BA010000 	    movl    $1, %edx
+ 291      00
+ 292 02ef 0F05     	    syscall
+ 293              	
+ 294              	    # Herstel stack frame en sluit clean af
+ 295 02f1 4889EC   	    movq    %rbp, %rsp
+ 296 02f4 5D       	    popq    %rbp
+ 297 02f5 B83C0000 	    movl    $60, %eax
+ 297      00
+GAS LISTING learn_decay.s 			page 9
+
+
+ 298 02fa 31FF     	    xorl    %edi, %edi
+ 299 02fc 0F05     	    syscall
+ 300              	
+ 301              	# --- STACK-PROOF INT TO ASCII WRITER ---
+ 302              	print_uint:
+ 303 02fe 488D0D00 	    leaq    (ascii_buf + 31)(%rip), %rcx       
+ 303      000000
+ 304 0305 C6010A   	    movb    $10, (%rcx)          
+ 305 0308 49C7C00A 	    movq    $10, %r8                      
+ 305      000000
+ 306              	.L_conv:
+ 307 030f 31D2     	    xorl    %edx, %edx
+ 308 0311 49F7F0   	    divq    %r8
+ 309 0314 80C230   	    addb    $48, %dl                      
+ 310 0317 48FFC9   	    decq    %rcx
+ 311 031a 8811     	    movb    %dl, (%rcx)
+ 312 031c 4885C0   	    testq   %rax, %rax
+ 313 031f 75EE     	    jnz     .L_conv
+ 314              	    
+ 315 0321 488D1500 	    leaq    (ascii_buf + 32)(%rip), %rdx
+ 315      000000
+ 316 0328 4829CA   	    subq    %rcx, %rdx
+ 317 032b B8010000 	    movl    $1, %eax
+ 317      00
+ 318 0330 BF010000 	    movl    $1, %edi
+ 318      00
+ 319 0335 4889CE   	    movq    %rcx, %rsi
+ 320 0338 0F05     	    syscall
+ 321 033a C3       	    ret
+ 322              	
+ 323              	.L_cuda_error:
+ 324 033b B8010000 	    movl    $1, %eax              # sys_write
+ 324      00
+ 325 0340 BF020000 	    movl    $2, %edi              # stderr
+ 325      00
+ 326 0345 488D3500 	    leaq    fmt_nocuda(%rip), %rsi
+ 326      000000
+ 327 034c 8B150000 	    movl    fmt_nocuda_l(%rip), %edx
+ 327      0000
+ 328 0352 0F05     	    syscall
+ 329 0354 4889EC   	    movq    %rbp, %rsp
+ 330 0357 5D       	    popq    %rbp
+ 331 0358 B83C0000 	    movl    $60, %eax
+ 331      00
+ 332 035d BF010000 	    movl    $1, %edi              # Exit code 1
+ 332      00
+ 333 0362 0F05     	    syscall
+ 334              	
+ 335              	.size _start, . - _start
+ 336              	.section .note.GNU-stack,"",@progbits
+ 337              	
+GAS LISTING learn_decay.s 			page 10
+
+
+DEFINED SYMBOLS
+       learn_decay.s:57     .text:0000000000000000 _start
+       learn_decay.s:4      .rodata:0000000000000000 db_file
+       learn_decay.s:5      .rodata:000000000000000c data_file
+       learn_decay.s:6      .rodata:0000000000000015 ptx_file
+       learn_decay.s:7      .rodata:000000000000002d func_name
+       learn_decay.s:9      .rodata:0000000000000039 fmt_start
+       learn_decay.s:10     .rodata:000000000000007a fmt_start_l
+       learn_decay.s:11     .rodata:000000000000007e fmt_match
+       learn_decay.s:12     .rodata:00000000000000a2 fmt_match_l
+       learn_decay.s:13     .rodata:00000000000000a6 fmt_z
+       learn_decay.s:14     .rodata:00000000000000b6 fmt_z_l
+       learn_decay.s:15     .rodata:00000000000000ba fmt_a
+       learn_decay.s:16     .rodata:00000000000000ca fmt_a_l
+       learn_decay.s:17     .rodata:00000000000000ce fmt_name
+       learn_decay.s:18     .rodata:00000000000000de fmt_name_l
+       learn_decay.s:19     .rodata:00000000000000e2 fmt_nl
+       learn_decay.s:21     .rodata:00000000000000e3 fmt_nocuda
+       learn_decay.s:22     .rodata:0000000000000127 fmt_nocuda_l
+       learn_decay.s:26     .data:0000000000000000 cu_ctx
+       learn_decay.s:27     .data:0000000000000008 cu_device
+       learn_decay.s:28     .data:000000000000000c cu_module
+       learn_decay.s:29     .data:0000000000000014 cu_function
+       learn_decay.s:31     .data:000000000000001c d_t_ptr
+       learn_decay.s:32     .data:0000000000000024 d_y_ptr
+       learn_decay.s:33     .data:000000000000002c d_k_out
+       learn_decay.s:36     .data:0000000000000038 kernel_params
+       learn_decay.s:37     .data:0000000000000038 p_t
+       learn_decay.s:38     .data:0000000000000040 p_y
+       learn_decay.s:39     .data:0000000000000048 p_k
+       learn_decay.s:40     .data:0000000000000050 p_num
+       learn_decay.s:42     .data:0000000000000058 kernel_args
+       learn_decay.s:44     .data:0000000000000078 fd_db
+       learn_decay.s:45     .data:0000000000000080 fd_data
+       learn_decay.s:46     .data:0000000000000088 ptr_db
+       learn_decay.s:47     .data:0000000000000090 ptr_data
+       learn_decay.s:50     .data:0000000000000098 stat_buf
+       learn_decay.s:53     .data:0000000000000128 learned_k
+       learn_decay.s:54     .data:000000000000012c ascii_buf
+       learn_decay.s:205    .text:000000000000020f BINARY_SEARCH_LOOP
+       learn_decay.s:235    .text:000000000000023a FOUND_NEAREST
+       learn_decay.s:232    .text:0000000000000238 MATCH_EXACT
+       learn_decay.s:227    .text:0000000000000232 SEARCH_HIGHER
+       learn_decay.s:243    .text:0000000000000243 PRINT_DETERMINATION
+       learn_decay.s:302    .text:00000000000002fe print_uint
+       learn_decay.s:278    .text:00000000000002c2 LEN_LOOP
+       learn_decay.s:283    .text:00000000000002cd PRINT_NAME
+
+UNDEFINED SYMBOLS
+cuInit
+cuDeviceGet
+cuCtxCreate
+cuMemAlloc
+cuMemcpyHtoD
+cuModuleLoad
+cuModuleGetFunction
+cuLaunchKernel
+GAS LISTING learn_decay.s 			page 11
+
+
+cuCtxSynchronize
+cuMemcpyDtoH
