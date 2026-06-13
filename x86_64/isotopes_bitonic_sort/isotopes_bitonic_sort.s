@@ -351,11 +351,27 @@ cuda_error_exit:
     movq    $60, %rax                       # sys_exit Exit(CUresult)
     syscall
 
+cuda_error_exit:
+    # Handle critical GPU or Driver API infrastructure constraints
+    movq    $1, %rax                        # sys_write
+    movq    $2, %rdi                        # stderr
+    leaq    fmt_err(%rip), %rsi             # Reference the existing error string
+    movq    $fmt_err_l, %rdx
+    syscall
+
+    movq    %rbp, %rsp
+    popq    %rbp
+    movq    $60, %rax                       # sys_exit Exit(1)
+    movq    $1, %rdi
+    syscall
+
 error_exit:
-    # Handle local I/O or Host-side file descriptor failures
-    movq    $1, %rax                        # sys_write stderr
-    movq    $2, %rdi
-    leaq    fmt_err(%rip), %rsi
+    # ==========================================================================
+    # HOST I/O SAFETY LOCK: PRINT CLEAR EXPLICIT ERROR ON LOCAL PATH FAILURE
+    # ==========================================================================
+    movq    $1, %rax                        # sys_write
+    movq    $2, %rdi                        # stderr
+    leaq    fmt_err(%rip), %rsi             # Inform user about file/descriptor constraint
     movq    $fmt_err_l, %rdx
     syscall
 
