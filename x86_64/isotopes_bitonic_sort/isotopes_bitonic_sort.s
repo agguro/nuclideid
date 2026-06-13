@@ -12,7 +12,7 @@
 
 .section .rodata
     default_bin:  .string "isotopes.bin"
-    kernel_name:  .string "bitonic_sort"
+    kernel_name:  .string "isotopes_bitonic_sort"
 
     msg_start:    .asciz "[GPU-DRIVER] Loading embedded CUBIN image for bitonic sorting...\n"
     msg_gpu:      .asciz "[GPU-DRIVER] GPU Grid scaling configured to exactly %u records (GridX=%u).\n"
@@ -28,7 +28,6 @@
     # ==========================================================================
     .align 8
     gpu_kernel_start:
-        .incbin "bitonic_sort.cubin"        # Ingests raw binary directly at compile-time
     gpu_kernel_end:
 
 .section .data
@@ -332,23 +331,6 @@ _start:
     popq    %rbp
     movq    $60, %rax                       # sys_exit Exit(0)
     xorq    %rdi, %rdi
-    syscall
-
-cuda_error_exit:
-    # --- DIAGNOSTIC MODE: Return the raw CUresult inside the exit code ---
-    movl    %eax, %edi                      # Move the raw CUDA error code (CUresult) into %edi
-
-    pushq   %rdi                            # Safeguard our error code over system write
-    movq    $1, %rax                        # sys_write
-    movq    $2, %rdi                        # stderr
-    leaq    fmt_err(%rip), %rsi
-    movq    $fmt_err_l, %rdx
-    syscall
-    popq    %rdi                            # Restore our exact CUDA error code
-
-    movq    %rbp, %rsp
-    popq    %rbp
-    movq    $60, %rax                       # sys_exit Exit(CUresult)
     syscall
 
 cuda_error_exit:
