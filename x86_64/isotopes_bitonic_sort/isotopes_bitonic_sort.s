@@ -2,9 +2,8 @@
  * ============================================================================
  * Architecture : x86_64 | Linux SysV ABI | AT&T Syntax
  * File         : isotopes_bitonic_sort.s
- * Description  : Standalone Autonomous GPU Bitonic Sorter. The GPU kernel
- * is embedded directly inside the host text segment using .incbin to enforce
- * zero-dependency execution.
+ * Description  : Standalone Autonomous GPU Bitonic Sorter with embedded CUBIN
+ * and raw dynamic diagnostic return capabilities.
  * Usage        : ./isotopes_bitonic_sort [-o target_sorted.bin]
  * ============================================================================
  */
@@ -13,7 +12,7 @@
 
 .section .rodata
     default_bin:  .string "isotopes.bin"
-    kernel_name:  .string "isotopes_bitonic_sort"
+    kernel_name:  .string "bitonic_sort"
 
     msg_start:    .asciz "[GPU-DRIVER] Loading embedded CUBIN image for bitonic sorting...\n"
     msg_gpu:      .asciz "[GPU-DRIVER] GPU Grid scaling configured to exactly %u records (GridX=%u).\n"
@@ -29,7 +28,7 @@
     # ==========================================================================
     .align 8
     gpu_kernel_start:
-        .incbin "isotopes_bitonic_sort.cubin"        # Ingests raw binary directly at compile-time
+        .incbin "bitonic_sort.cubin"        # Ingests raw binary directly at compile-time
     gpu_kernel_end:
 
 .section .data
@@ -262,7 +261,7 @@ _start:
     jnz     cuda_error_exit
 
     # Configure driver loop boundary variables
-    movq    d_db_ptr(%rip), %rax
+    movq    d_db_ptr(%rax), %rax
     movq    %rax, param_db(%rip)
     movl    $2, param_k(%rip)
 
@@ -336,17 +335,20 @@ _start:
     syscall
 
 cuda_error_exit:
-    # Handle critical GPU or Driver API infrastructure constraints
+    # --- DIAGNOSTIC MODE: Return the raw CUresult inside the exit code ---
+    movl    %eax, %edi                      # Move the raw CUDA error code (CUresult) into %edi
+
+    pushq   %rdi                            # Safeguard our error code over system write
     movq    $1, %rax                        # sys_write
     movq    $2, %rdi                        # stderr
-    leaq    fmt_err(%rip), %rsi             # Reference the existing error string
+    leaq    fmt_err(%rip), %rsi
     movq    $fmt_err_l, %rdx
     syscall
+    popq    %rdi                            # Restore our exact CUDA error code
 
     movq    %rbp, %rsp
     popq    %rbp
-    movq    $60, %rax                       # sys_exit Exit(1)
-    movq    $1, %rdi
+    movq    $60, %rax                       # sys_exit Exit(CUresult)
     syscall
 
 error_exit:
