@@ -2,8 +2,8 @@
  * ============================================================================
  * Architecture : x86_64 | Linux SysV ABI | AT&T Syntax
  * File         : isotopes_bitonic_sort.s
- * Description  : Standalone Autonomous GPU Bitonic Sorter with embedded CUBIN
- * and raw dynamic diagnostic return capabilities.
+ * Description  : Standalone Autonomous GPU Bitonic Sorter.
+ * Embedded 64-bit parameter alignment framework with raw diagnostic capability.
  * Usage        : ./isotopes_bitonic_sort [-o target_sorted.bin]
  * ============================================================================
  */
@@ -12,10 +12,10 @@
 
 .section .rodata
     default_bin:  .string "isotopes.bin"
-    kernel_name:  .string "isotopes_bitonic_sort"
+    kernel_name:  .string "bitonic_sort"
 
     msg_start:    .asciz "[GPU-DRIVER] Loading embedded CUBIN image for bitonic sorting...\n"
-    msg_gpu:      .asciz "[GPU-DRIVER] GPU Grid scaling configured to exactly %u records (GridX=%u).\n"
+    msg_gpu:      .asciz "[GPU-DRIVER] GPU Grid scaling configured to exactly %lu records (GridX=%lu).\n"
     msg_done:     .asciz "[GPU-DRIVER] Completed! Sorted database saved.\n"
     fmt_err:      .ascii "\033[1;31m[ERROR]\033[0m CUDA Driver API or I/O resource constraint failure.\n"
     fmt_err_l = . - fmt_err
@@ -28,6 +28,7 @@
     # ==========================================================================
     .align 8
     gpu_kernel_start:
+        .incbin "bitonic_sort.cubin"        # Ingests raw binary directly at compile-time
     gpu_kernel_end:
 
 .section .data
@@ -38,11 +39,17 @@
     cu_function:  .quad 0
     d_db_ptr:     .quad 0
 
+    # ==========================================================================
+    # STRICT 8-BYTE ALIGNED PARAMETER BLOCK FOR KERNEL INTERACTION
+    # ==========================================================================
     .align 8
     param_db:     .quad 0
-    param_j:      .long 0
-    param_k:      .long 0
-    param_N:      .long 0
+    .align 8
+    param_j:      .quad 0                   # 64-bit aligned parameter bounds
+    .align 8
+    param_k:      .quad 0                   # 64-bit aligned parameter bounds
+    .align 8
+    param_N:      .quad 0                   # 64-bit aligned parameter bounds
 
     .align 8
     kernel_args:
@@ -149,7 +156,7 @@ _start:
     # Store determined power-of-2 dimensions
     movl    %eax, %eax                      # Explicitly zero-extend %eax into %rax
     movq    %rax, records_pow2(%rip)
-    movl    %eax, param_N(%rip)
+    movq    %rax, param_N(%rip)             # Saved as 64-bit parameter base
 
     # Compute padded byte sizing = records_pow2 * 24 bytes
     imulq   $24, %rax, %rcx
@@ -203,8 +210,8 @@ _start:
 
 .L_sort_gpu_init:
     leaq    msg_gpu(%rip), %rdi
-    movl    param_N(%rip), %esi
-    movl    grid_x(%rip), %edx
+    movq    param_N(%rip), %rsi
+    movq    grid_x(%rip), %rdx
     xorq    %rax, %rax
     call    printf@PLT
 
@@ -252,7 +259,7 @@ _start:
     jnz     cuda_error_exit
 
     # Synchronize layout states onto VRAM device memory pipeline
-    movq    d_db_ptr(%rip), %rdi
+    movq    d_db_ptr(%rip), %rdi            # Dedicated RIP-relative base anchor
     movq    ptr_out(%rip), %rsi
     movq    size_pow2(%rip), %rdx
     call    cuMemcpyHtoD@PLT
@@ -260,14 +267,14 @@ _start:
     jnz     cuda_error_exit
 
     # Configure driver loop boundary variables
-    movq    d_db_ptr(%rax), %rax
+    movq    d_db_ptr(%rip), %rax            # Corrected pointer assignment anchor
     movq    %rax, param_db(%rip)
-    movl    $2, param_k(%rip)
+    movq    $2, param_k(%rip)               # Initialize as 64-bit quad
 
 .L_k_loop:
-    movl    param_k(%rip), %eax
-    shrl    $1, %eax
-    movl    %eax, param_j(%rip)
+    movq    param_k(%rip), %rax
+    shrq    $1, %rax                        # 64-bit shift right operation
+    movq    %rax, param_j(%rip)
 
 .L_j_loop:
     # Trigger parallel execution blocks on hardware threads
@@ -283,20 +290,24 @@ _start:
     movq    $0, 32(%rsp)
     movq    $0, 24(%rsp)
     leaq    kernel_args(%rip), %rax
-    movq    %rax, 16(%rsp)                  # Pass target array address pointer
+    movq    %rax, 16(%rsp)                  # Pass perfectly aligned argument matrix address
     movq    $0, 8(%rsp)
     movq    $1, 0(%rsp)
     call    cuLaunchKernel@PLT
+    testl   %eax, %eax                      # Intercept core kernel parameter failure states
+    jnz     cuda_error_exit
     addq    $48, %rsp                       # Instantly wipe context frame allocation
 
     call    cuCtxSynchronize@PLT
+    testl   %eax, %eax
+    jnz     cuda_error_exit
 
-    shrl    $1, param_j(%rip)
+    shrq    $1, param_j(%rip)               # 64-bit parameter processing
     jnz     .L_j_loop
 
-    shll    $1, param_k(%rip)
-    movl    param_N(%rip), %eax
-    cmpl    %eax, param_k(%rip)
+    shlq    $1, param_k(%rip)               # 64-bit parameter processing
+    movq    param_N(%rip), %rax
+    cmpq    %rax, param_k(%rip)
     jle     .L_k_loop
 
     # Download sorted matrix values directly back into shared mmap layout
@@ -334,26 +345,27 @@ _start:
     syscall
 
 cuda_error_exit:
-    # Handle critical GPU or Driver API infrastructure constraints
+    # --- DIAGNOSTIC MODE: Return the raw CUresult inside the exit code ---
+    movl    %eax, %edi                      # Move the raw CUDA error code (CUresult) into %edi
+
+    pushq   %rdi                            # Safeguard our error code over system write
     movq    $1, %rax                        # sys_write
     movq    $2, %rdi                        # stderr
-    leaq    fmt_err(%rip), %rsi             # Reference the existing error string
+    leaq    fmt_err(%rip), %rsi
     movq    $fmt_err_l, %rdx
     syscall
+    popq    %rdi                            # Restore our exact CUDA error code
 
     movq    %rbp, %rsp
     popq    %rbp
-    movq    $60, %rax                       # sys_exit Exit(1)
-    movq    $1, %rdi
+    movq    $60, %rax                       # sys_exit Exit(CUresult)
     syscall
 
 error_exit:
-    # ==========================================================================
-    # HOST I/O SAFETY LOCK: PRINT CLEAR EXPLICIT ERROR ON LOCAL PATH FAILURE
-    # ==========================================================================
-    movq    $1, %rax                        # sys_write
-    movq    $2, %rdi                        # stderr
-    leaq    fmt_err(%rip), %rsi             # Inform user about file/descriptor constraint
+    # Handle local I/O or Host-side file descriptor failures
+    movq    $1, %rax                        # sys_write stderr
+    movq    $2, %rdi
+    leaq    fmt_err(%rip), %rsi
     movq    $fmt_err_l, %rdx
     syscall
 
