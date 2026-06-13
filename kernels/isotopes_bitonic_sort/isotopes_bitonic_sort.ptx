@@ -1,0 +1,102 @@
+// ============================================================================
+// Architecture : NVIDIA PTX 7.0 | sm_61 (Pascal) | 64-bit Addressing
+// File         : isotopes_bitonic_sort.ptx
+// Description  : ABI-Compliant 24-byte Structure Parallel Bitonic Sorter.
+// Parses Z, N, A, Symbol and sorts vectorially via 64-bit double k_values.
+// ============================================================================
+
+.version 7.0
+.target sm_61
+.address_size 64
+
+.visible .entry isotopes_bitonic_sort(
+    .param .u64 db_ptr,
+    .param .u32 j,
+    .param .u32 k,
+    .param .u32 num_records
+)
+{
+    // Register-status allocatie
+    .reg .u32 %gtid, %i, %ixj, %j, %k, %N;
+    .reg .u64 %base_addr, %addr1, %addr2, %offset1_64, %offset2_64;
+    .reg .f64 %k1, %k2; // Veranderd naar 64-bit double precision floats
+    .reg .pred %p_dir, %p_swap, %p_valid;
+
+    // Inladen van parameters vanaf de host stack
+    ld.param.u64 %base_addr,   [db_ptr];
+    ld.param.u32 %j,           [j];
+    ld.param.u32 %k,           [k];
+    ld.param.u32 %N,           [num_records];
+
+    // Globale Thread-ID berekening
+    .reg .u32 %ltid, %bid, %bdim;
+    mov.u32 %ltid, %tid.x;
+    mov.u32 %bid, %ctaid.x;
+    mov.u32 %bdim, %ntid.x;
+    mad.lo.u32 %i, %bid, %bdim, %ltid;
+
+    // Bitwise XOR voor de bitonische partner-lane index
+    xor.b32 %ixj, %i, %j;
+
+    // Validatie-checks: Voorkom out-of-bound memory corruptie
+    setp.ge.u32 %p_valid, %ixj, %i;
+    @!%p_valid bra EXIT;
+    setp.ge.u32 %p_valid, %ixj, %N;
+    @%p_valid bra EXIT;
+
+    // ==========================================================================
+    // ADRESBEREKENING: VERMENIGVULDIGING MET EXACT 24 BYTES (THE HUMAN WAY)
+    // ==========================================================================
+    .reg .u32 %offset1, %offset2;
+    mad.lo.u32 %offset1, %i, 24, 0;         // %offset1 = %i * 24 bytes
+    cvt.u64.u32 %offset1_64, %offset1;
+    add.u64 %addr1, %base_addr, %offset1_64;
+
+    mad.lo.u32 %offset2, %ixj, 24, 0;       // %offset2 = %ixj * 24 bytes
+    cvt.u64.u32 %offset2_64, %offset2;
+    add.u64 %addr2, %base_addr, %offset2_64;
+
+    // Laad de 64-bit double precision k_value in vanaf offset 16!
+    ld.global.f64 %k1, [%addr1+16];
+    ld.global.f64 %k2, [%addr2+16];
+
+    // Sorteerrichting bepalen op basis van de bitonische k-vlag
+    .reg .u32 %and_k;
+    and.b32 %and_k, %i, %k;
+    setp.eq.u32 %p_dir, %and_k, 0;
+
+    // Floating-point vergelijking via stabiele double-precision lanes (.f64)
+    @%p_dir  setp.gt.f64 %p_swap, %k1, %k2;
+    @!%p_dir setp.lt.f64 %p_swap, %k1, %k2;
+
+    // Als er geen swap nodig is -> Direct skippen naar de exit grens
+    @!%p_swap bra EXIT;
+
+    // ==========================================================================
+    // PIPELINED RECORD SWAPPING: 3 MOULEN VAN REGISTERS (8+8+8 = 24 BYTES)
+    // ==========================================================================
+    .reg .u64 %chunk1_a, %chunk1_b, %chunk1_c;
+    .reg .u64 %chunk2_a, %chunk2_b, %chunk2_c;
+
+    // Laad Record 1 (Thread %i) in registers
+    ld.global.u64 %chunk1_a, [%addr1];      // Offset 0-7  : Bevat Z (uint32) en N (uint32)
+    ld.global.u64 %chunk1_b, [%addr1+8];    // Offset 8-15 : Bevat A (uint32) en Symbol (char[4])
+    ld.global.u64 %chunk1_c, [%addr1+16];   // Offset 16-23: Bevat de complete k_value (double)
+
+    // Laad Record 2 (Partner %ixj) in registers
+    ld.global.u64 %chunk2_a, [%addr2];
+    ld.global.u64 %chunk2_b, [%addr2+8];
+    ld.global.u64 %chunk2_c, [%addr2+16];
+
+    // Asynchrone cross-over opslag naar het globale VRAM van de Pascal GPU
+    st.global.u64 [%addr1],    %chunk2_a;
+    st.global.u64 [%addr1+8],  %chunk2_b;
+    st.global.u64 [%addr1+16], %chunk2_c;
+
+    st.global.u64 [%addr2],    %chunk1_a;
+    st.global.u64 [%addr2+8],  %chunk1_b;
+    st.global.u64 [%addr2+16], %chunk1_c;
+
+EXIT:
+    ret;
+}
