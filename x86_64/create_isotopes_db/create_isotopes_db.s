@@ -2,8 +2,8 @@
  * ============================================================================
  * Architecture : x86_64 | Linux SysV ABI | AT&T Syntax
  * File         : create_isotopes_db.s
- * Description  : Offline FPU CSV-to-Binary Matrix Transformer Engine with
- * 80-bit Hardware register division parity hooks.
+ * Description  : Offline FPU CSV-to-Binary Matrix Transformer Engine.
+ * Upgraded to strict 32-byte structural record strides.
  * Usage        : ./create_isotopes_db [-i input.csv] [-o output.bin]
  * ============================================================================
  */
@@ -31,25 +31,26 @@
     struct_cursor:.quad 0
 
 .section .bss
-    .align 16
-    db_record:    .space 24             # Layout: Z(4), N(4), A(4), Symbol(4), k(8)
+    .align 32
+    # Layout geüpgraded naar exact 32 bytes om aan te sluiten op de shll $5 host-stride
+    # Offsets: Z(0), N(4), A(8), Symbol(12), k_double(16), padding/unused(24) = 32 bytes
+    db_record:    .space 32             
     ascii_hl:     .space 64
     comma_count:  .quad 0
     hl_ptr:       .quad 0
     line_started: .quad 0
-    ptr_end:      .quad 0               # Memory anchor to safeguard loop boundary from clobbering
+    ptr_end:      .quad 0               
 
 .section .text
 _start:
-    # Set up safe frame pointer and align stack to 16 bytes (ABI compliant)
     pushq   %rbp
     movq    %rsp, %rbp
     andq    $-16, %rsp
-    subq    $128, %rsp                      # Scratch space for fstat struct allocation
+    subq    $128, %rsp                      
 
     # --- Parse stack arguments (-i and -o flags) ---
-    movq    8(%rbp), %r8                    # %r8 = argc
-    leaq    24(%rbp), %rcx                  # %rcx = argv[1]
+    movq    8(%rbp), %r8                    
+    leaq    24(%rbp), %rcx                  
     leaq    default_csv(%rip), %rax
     movq    %rax, csv_name(%rip)
     leaq    default_bin(%rip), %rax
@@ -61,11 +62,11 @@ _start:
     jz      .L_files_ready
 
     movb    (%rdi), %al
-    cmpb    $45, %al                        # Check for '-' prefix
+    cmpb    $45, %al                        
     jne     .L_next_p
 
     movb    1(%rdi), %al
-    cmpb    $105, %al                       # Check for '-i' input flag
+    cmpb    $105, %al                       
     jne     .L_check_o
 
     addq    $8, %rcx
@@ -74,7 +75,7 @@ _start:
     jmp     .L_next_p
 
 .L_check_o:
-    cmpb    $111, %al                       # Check for '-o' output flag
+    cmpb    $111, %al                       
     jne     .L_next_p
 
     addq    $8, %rcx
@@ -86,50 +87,49 @@ _start:
     jmp     .L_parse_loop
 
 .L_files_ready:
-    # Print parser status notification
     leaq    msg_start(%rip), %rdi
     movq    csv_name(%rip), %rsi
     movq    bin_name(%rip), %rdx
     xorq    %rax, %rax
     call    printf@PLT
 
-    # Open source CSV file (O_RDONLY = 0)
-    movq    $2, %rax                        # sys_open
+    # Open source CSV file
+    movq    $2, %rax                        
     movq    csv_name(%rip), %rdi
     xorq    %rsi, %rsi
     syscall
     js      error_exit
     movq    %rax, fd_in(%rip)
 
-    # Fetch file capacity size via native sys_fstat (syscall 5)
-    movq    $5, %rax                        # sys_fstat
+    # Fetch file capacity size via native sys_fstat
+    movq    $5, %rax                        
     movq    fd_in(%rip), %rdi
-    movq    %rsp, %rsi                      # Pass aligned stack pointer for stat struct
+    movq    %rsp, %rsi                      
     syscall
     js      error_exit
-    movq    48(%rsp), %rax                  # st_size resides at offset 48
+    movq    48(%rsp), %rax                  
     movq    %rax, size_in(%rip)
 
     # Map input text CSV read-only into virtual memory space
-    movq    $9, %rax                        # sys_mmap
+    movq    $9, %rax                        
     xorq    %rdi, %rdi
     movq    size_in(%rip), %rsi
-    movq    $1, %rdx                        # PROT_READ
-    movq    $2, %r10                        # MAP_PRIVATE
+    movq    $1, %rdx                        
+    movq    $2, %r10                        
     movq    fd_in(%rip), %r8
     xorq    %r9, %r9
     syscall
     js      error_exit
     movq    %rax, ptr_in(%rip)
 
-    # Calculate and store the terminal memory stream limit boundary
+    # Calculate terminal memory stream limit boundary
     movq    ptr_in(%rip), %rsi
     movq    %rsi, %rax
     addq    size_in(%rip), %rax
-    movq    %rax, ptr_end(%rip)             # Safe memory anchor setup
+    movq    %rax, ptr_end(%rip)             
 
-    # Allocate matrix destination target file (O_RDWR|O_CREAT|O_TRUNC = 0x242)
-    movq    $2, %rax                        # sys_open
+    # Allocate matrix destination target file
+    movq    $2, %rax                        
     movq    bin_name(%rip), %rdi
     movq    $0x242, %rsi
     movq    $0644, %rdx
@@ -137,27 +137,25 @@ _start:
     js      error_exit
     movq    %rax, fd_out(%rip)
 
-    # --- Parser Loop Setup ---
-    movq    ptr_in(%rip), %rsi              # %rsi = active character memory reader
+    movq    ptr_in(%rip), %rsi              
 
 .L_skip_header_row:
     movb    (%rsi), %al
     incq    %rsi
-    cmpb    $10, %al                        # Search for trailing heading line break
+    cmpb    $10, %al                        
     jne     .L_skip_header_row
 
 .L_parse_byte:
-    # Perform strict boundary check against the protected memory anchor
     movq    ptr_end(%rip), %rax
-    cmpq    %rax, %rsi                      # End of memory stream mapping reached?
+    cmpq    %rax, %rsi                      
     jae     .L_compiler_done
 
-    movzbq  (%rsi), %rax                    # Ingest single byte to lower %rax accumulator
+    movzbq  (%rsi), %rax                    
     incq    %rsi
 
-    cmpb    $10, %al                        # Newline transition checker
+    cmpb    $10, %al                        
     je      .L_newline
-    cmpb    $44, %al                        # Comma column boundary checker
+    cmpb    $44, %al                        
     je      .L_comma
 
     movq    comma_count(%rip), %rdx
@@ -177,7 +175,7 @@ _start:
     subb    $48, %al
     movzbl  %al, %eax
     addl    %eax, %ecx
-    movl    %ecx, (db_record+0)(%rip)       # Accrue atomic integer Z value
+    movl    %ecx, (db_record+0)(%rip)       
     jmp     .L_parse_byte
 
 .L_n:
@@ -186,14 +184,14 @@ _start:
     subb    $48, %al
     movzbl  %al, %eax
     addl    %eax, %ecx
-    movl    %ecx, (db_record+4)(%rip)       # Accrue neutron integer N value
+    movl    %ecx, (db_record+4)(%rip)       
     jmp     .L_parse_byte
 
 .L_sym:
     movq    hl_ptr(%rip), %rdx
-    cmpq    $3, %rdx                        # Maximum 3 letters symbol constraint check
+    cmpq    $3, %rdx                        
     jae     .L_parse_byte
-    leaq    db_record+12(%rip), %rcx
+    leaq    db_record+12(%rip), %rcx        # Offset 12 voor symbool string
     movb    %al, (%rcx,%rdx)
     incq    %rdx
     movq    %rdx, hl_ptr(%rip)
@@ -209,107 +207,102 @@ _start:
 
 .L_comma:
     movq    comma_count(%rip), %rdx
-    cmpq    $16, %rdx                       # Column 17 (half_life_sec, index 16) finished?
+    cmpq    $16, %rdx                       
     jne     .L_inc_comma
 
     movq    hl_ptr(%rip), %r8
     leaq    ascii_hl(%rip), %rcx
-    movb    $0, (%rcx,%r8)                  # Impose immediate explicit null-termination
+    movb    $0, (%rcx,%r8)                  
 
 .L_inc_comma:
     incq    %rdx
     movq    %rdx, comma_count(%rip)
-    movq    $0, hl_ptr(%rip)                # Reset character write head tracker index
+    movq    $0, hl_ptr(%rip)                
     jmp     .L_parse_byte
 
 .L_newline:
     # Compute Mass Number A = Z + N and commit to structural offset 8
     movl    (db_record+0)(%rip), %eax
     addl    (db_record+4)(%rip), %eax
-    movl    %eax, (db_record+8)(%rip)
+    movl    %eax, (db_record+8)(%rip)       # Offset 8 voor A
 
     # Verify field data against stable state constants
     movb    ascii_hl(%rip), %al
     testb   %al, %al
     jz      .L_commit_stable
-    cmpb    $83, %al                        # Check for 'S' matching constraint (STABLE)
+    cmpb    $83, %al                        
     je      .L_commit_stable
 
-    # Call external library float parsing routine safely (ABI & Stack Alignment compliant)
-    subq    $8, %rsp                        # 1. Pad stack by 8 bytes to secure alignment over push
-    pushq   %rsi                            # 2. Push another 8 bytes -> Stack remains 16-byte aligned!
+    # Call external library float parsing routine safely
+    subq    $8, %rsp                        
+    pushq   %rsi                            
     leaq    ascii_hl(%rip), %rdi
     xorq    %rsi, %rsi
-    call    strtod@PLT                      # Extracted float lands safely in %xmm0
+    call    strtod@PLT                      
     popq    %rsi
-    addq    $8, %rsp                        # 3. Clean alignment padding from stack pointer
+    addq    $8, %rsp                        
 
-    # ==========================================================================
-    # PURE HARDWARE 80-BIT FPU REGISTER MATRIX DIVISION: ELIMINATE DOUBLE ROUNDING
-    # ==========================================================================
-    subq    $8, %rsp                        # Allocate an 8-byte stack slot
-    movsd   %xmm0, (%rsp)                   # Spill the parsed 64-bit half_life_sec onto the stack
+    # Execute 80-bit FPU Register Matrix Division
+    subq    $8, %rsp                        
+    movsd   %xmm0, (%rsp)                   
 
-    fldln2                                  # Load untamperable 80-bit ln(2) -> ST(0) = ln2
-    fldl    (%rsp)                          # Load 64-bit half_life into FPU -> ST(0) = hl, ST(1) = ln2
-    fdivrp  %st, %st(1)                     # Compute ST(1) / ST(0) and pop -> ST(0) = 80-bit pure k
+    fldln2                                  
+    fldl    (%rsp)                          
+    fdivrp  %st, %st(1)                     
 
-    fstpl   (%rsp)                          # Round 80-bit k directly to 64-bit double and store
-    movsd   (%rsp), %xmm1                   # Pull the bit-exact double into SSE register %xmm1
-    addq    $8, %rsp                        # Reclaim the alignment stack frame space
+    fstpl   (%rsp)                          
+    movsd   (%rsp), %xmm1                   
+    addq    $8, %rsp                        
 
-    movsd   %xmm1, (db_record+16)(%rip)     # Commit double k-value to offset 16
+    movsd   %xmm1, (db_record+16)(%rip)     # Offset 16 voor double k-value
     jmp     .L_write_record
 
 .L_commit_stable:
-    movq    $0, (db_record+16)(%rip)        # Stable nuclei decay rate constant -> k = 0.0
+    movq    $0, (db_record+16)(%rip)        
 
 .L_write_record:
-    # Flush aligned 24-byte record entry onto target storage
-    # CRITICAL: Preserve character read pointer from destructive parameter overrides
     pushq   %rsi
 
+    # Schrijf de volledige gealigneerde 32-byte falanx weg naar schijf
     movq    $1, %rax                        # sys_write
     movq    fd_out(%rip), %rdi
-    leaq    db_record(%rip), %rsi           # Buffer pointer pass
-    movq    $24, %rdx
+    leaq    db_record(%rip), %rsi           
+    movq    $32, %rdx                       # Gecorrigeerd naar exact 32 bytes structure stride
     syscall
 
-    popq    %rsi                            # Restore pristine character stream pointer
+    popq    %rsi                            
 
 .L_reset_row_state:
-    # Empty structure state blocks for next block row
+    # Maak de complete 32-byte structuur weer leeg voor de volgende regel
     movq    $0, comma_count(%rip)
     movq    $0, hl_ptr(%rip)
     movq    $0, db_record(%rip)
     movq    $0, db_record+8(%rip)
     movq    $0, db_record+16(%rip)
+    movq    $0, db_record+24(%rip)          # Wis ook de padding bytes
     jmp     .L_parse_byte
 
 .L_compiler_done:
-    # Tear down active resource file handles
-    movq    $3, %rax                        # sys_close input
+    movq    $3, %rax                        
     movq    fd_in(%rip), %rdi
     syscall
 
-    movq    $3, %rax                        # sys_close output
+    movq    $3, %rax                        
     movq    fd_out(%rip), %rdi
     syscall
 
-    # Print validation success prompt
     leaq    msg_done(%rip), %rdi
     xorq    %rax, %rax
     call    printf@PLT
 
-    # Return context variables and safely exit process execution scope
     movq    %rbp, %rsp
     popq    %rbp
-    movq    $60, %rax                       # sys_exit Exit(0)
+    movq    $60, %rax                       
     xorq    %rdi, %rdi
     syscall
 
 error_exit:
-    movq    $1, %rax                        # sys_write stderr
+    movq    $1, %rax                        
     movq    $2, %rdi
     leaq    fmt_err(%rip), %rsi
     movq    $fmt_err_l, %rdx
@@ -317,7 +310,7 @@ error_exit:
 
     movq    %rbp, %rsp
     popq    %rbp
-    movq    $60, %rax                       # Exit(1)
+    movq    $60, %rax                       
     movq    $1, %rdi
     syscall
 

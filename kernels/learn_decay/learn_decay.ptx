@@ -2,6 +2,14 @@
 .target sm_61
 .address_size 64
 
+// ============================================================================
+// Kernel      : learnDecayK (Pure f64 Double Precision Engine)
+// Parameters  : t_ptr         (.u64) -> Invoerbuffer (double2 array, t op offset 0)
+//               y_ptr         (.u64) -> Invoerbuffer (double2 array, y op offset 8)
+//               k_out         (.u64) -> Global VRAM uitvoeradres voor k (f64)
+//               num_samples   (.u32) -> Aantal datapunten (npoints)
+// ============================================================================
+
 .visible .entry learnDecayK(
     .param .u64 t_ptr,
     .param .u64 y_ptr,
@@ -9,90 +17,105 @@
     .param .u32 num_samples
 )
 {
-    // Register hernoemd van %tid naar %gtid om conflicten met het systeemregister te voorkomen
-    .reg .u32 %gtid, %idx, %N;
-    .reg .u64 %t_base, %y_base, %out_base, %addr_t, %addr_y, %idx_64;
-    .reg .f32 %t_val, %y_val, %y_pred, %k_val, %grad, %diff;
-    .reg .f32 %m, %v, %alpha, %beta1, %beta2, %epsilon;
-    .reg .pred %p_valid;
+    .reg .pred   %p_valid, %p_loop;
+    .reg .u32    %gtid, %N, %epoch;
+    .reg .u64    %t_base, %y_base, %out_base, %addr_t, %addr_y, %idx_64;
+    .reg .f64    %d_t, %d_y, %d_ypred, %d_k, %d_grad, %d_diff, %d_x;
+    .reg .f64    %m, %v, %alpha, %beta1, %beta2, %epsilon;
+    .reg .f64    %om_beta1, %om_beta2, %grad_sq, %denom, %neg_alpha;
 
-    ld.param.u64 %t_base,    [t_ptr];
-    ld.param.u64 %y_base,    [y_ptr];
-    ld.param.u64 %out_base,  [k_out];
-    ld.param.u32 %N,         [num_samples];
+    // Laad parameters (64-bit pointers en double-precision metadata)
+    ld.param.u64 %t_base,   [t_ptr];
+    ld.param.u64 %y_base,   [y_ptr];
+    ld.param.u64 %out_base, [k_out];
+    ld.param.u32 %N,        [num_samples];
 
-    // Nu kan de loepzuivere standaardnotatie weer zonder dat ptxas overstag gaat!
+    // Grid-stride of thread-index bepaling
     .reg .u32 %ltid, %bid, %bdim;
-    mov.u32 %ltid, %tid.x;
-    mov.u32 %bid, %ctaid.x;
-    mov.u32 %bdim, %ntid.x;
-    mad.lo.u32 %gtid, %bid, %bdim, %ltid;
+    mov.u32      %ltid, %tid.x;
+    mov.u32      %bid, %ctaid.x;
+    mov.u32      %bdim, %ntid.x;
+    mad.lo.u32   %gtid, %bid, %bdim, %ltid;
 
-    setp.ge.u32 %p_valid, %gtid, %N;
+    // Grenscontrole: draai alleen als de thread binnen het aantal samples valt
+    setp.ge.u32  %p_valid, %gtid, %N;
     @%p_valid bra EXIT;
 
-    mov.f32 %k_val,   0.5;
-    mov.f32 %m,       0.0;
-    mov.f32 %v,       0.0;
-    mov.f32 %alpha,   0.01;
-    mov.f32 %beta1,   0.9;
-    mov.f32 %beta2,   0.999;
-    mov.f32 %epsilon, 0.00000001;
+    // Hyperparameters initialiseren in f64
+    mov.f64      %d_k,     0.5;
+    mov.f64      %m,       0.0;
+    mov.f64      %v,       0.0;
+    mov.f64      %alpha,   0.01;
+    mov.f64      %beta1,   0.9;
+    mov.f64      %beta2,   0.999;
+    mov.f64      %epsilon, 0.00000001;
 
-    .reg .u32 %epoch;
-    mov.u32 %epoch, 0;
+    mov.u32      %epoch, 0;
+
+    // Adresberekening op basis van de double2 array (16 bytes per datapunt)
+    cvt.u64.u32  %idx_64, %gtid;
+    shl.b64      %idx_64, %idx_64, 4;     // idx * 16 bytes
+    add.u64      %addr_t, %t_base, %idx_64;
+    add.u64      %addr_y, %y_base, %idx_64; // t en y zitten in dezelfde struct gevlochten
 
 EPOCH_LOOP:
-    shl.b32 %idx, %gtid, 2;
-    cvt.u64.u32 %idx_64, %idx;       
-    add.u64 %addr_t, %t_base, %idx_64;
-    add.u64 %addr_y, %y_base, %idx_64;
+    // Laad t en y als pure f64 uit het VRAM
+    ld.global.f64 %d_t, [%addr_t];         // t op offset 0
+    ld.global.f64 %d_y, [%addr_y+8];       // y op offset 8
 
-    ld.global.f32 %t_val, [%addr_t];
-    ld.global.f32 %y_val, [%addr_y];
+    // x = -k * t
+    mul.f64      %d_x, %d_k, %d_t;
+    neg.f64      %d_x, %d_x;
 
-    .reg .f32 %pow, %neg_k, %log2e;
-    mov.f32 %log2e, 1.44269504;
-    neg.f32 %neg_k, %k_val;
-    mul.f32 %pow, %neg_k, %t_val;
-    mul.f32 %pow, %pow, %log2e;
-    ex2.approx.f32 %y_pred, %pow;
+    // Symmetrische f64 Taylor-reeks voor e^x (Horner's schema)
+    mov.f64      %d_ypred, 0d3A08B4E302222E42;             // 1/362880 (9!)
+    mad.rn.f64   %d_ypred, %d_ypred, %d_x, 0d3A932E42E302222E; // 1/40320 (8!)
+    mad.rn.f64   %d_ypred, %d_ypred, %d_x, 0d3B27ECE4C5868B75; // 1/5040 (7!)
+    mad.rn.f64   %d_ypred, %d_ypred, %d_x, 0d3BD010A9401A08B4; // 1/720 (6!)
+    mad.rn.f64   %d_ypred, %d_ypred, %d_x, 0d3C644E6A3B9E77F7; // 1/120 (5!)
+    mad.rn.f64   %d_ypred, %d_ypred, %d_x, 0d3D08888888888888; // 1/24 (4!)
+    mad.rn.f64   %d_ypred, %d_ypred, %d_x, 0d3D95555555555555; // 1/6 (3!)
+    mad.rn.f64   %d_ypred, %d_ypred, %d_x, 0d3FE0000000000000; // 1/2 (2!)
+    mad.rn.f64   %d_ypred, %d_ypred, %d_x, 0d3FF0000000000000; // 1
+    mad.rn.f64   %d_ypred, %d_ypred, %d_x, 0d3FF0000000000000; // 1
 
-    sub.f32 %diff, %y_val, %y_pred;
-    mul.f32 %grad, %diff, %y_pred;
-    mul.f32 %grad, %grad, %t_val;
-    mul.f32 %grad, %grad, -2.0;
+    // Bereken Gradiënt van MSE naar k: grad = -2 * (y - y_pred) * t * y_pred
+    sub.f64      %d_diff, %d_y, %d_ypred;
+    mul.f64      %d_grad, %d_diff, %d_ypred;
+    mul.f64      %d_grad, %d_grad, %d_t;
+    mul.f64      %d_grad, %d_grad, -2.0;
 
-    .reg .f32 %om_beta1, %om_beta2;
-    sub.f32 %om_beta1, 1.0, %beta1;
-    sub.f32 %om_beta2, 1.0, %beta2;
+    // Adam Update Logica in f64
+    sub.f64      %om_beta1, 1.0, %beta1;
+    sub.f64      %om_beta2, 1.0, %beta2;
     
-    mul.f32 %m, %m, %beta1;
-    mad.rn.f32 %m, %om_beta1, %grad, %m; 
+    // Eerste moment: m = beta1 * m + (1 - beta1) * grad
+    mul.f64      %m, %m, %beta1;
+    mad.rn.f64   %m, %om_beta1, %d_grad, %m; 
 
-    .reg .f32 %grad_sq;
-    mul.f32 %grad_sq, %grad, %grad;
-    mul.f32 %v, %v, %beta2;
-    mad.rn.f32 %v, %om_beta2, %grad_sq, %v;
+    // Tweede moment: v = beta2 * v + (1 - beta2) * grad^2
+    mul.f64      %grad_sq, %d_grad, %d_grad;
+    mul.f64      %v, %v, %beta2;
+    mad.rn.f64   %v, %om_beta2, %grad_sq, %v;
 
-    .reg .f32 %denom;
-    sqrt.approx.f32 %denom, %v;
-    add.f32 %denom, %denom, %epsilon;
-    div.approx.f32 %denom, %m, %denom;
+    // Gradiënt correctie en deling
+    sqrt.rn.f64  %denom, %v;
+    add.f64      %denom, %denom, %epsilon;
+    div.rn.f64   %denom, %m, %denom;
     
-    .reg .f32 %neg_alpha;
-    neg.f32 %neg_alpha, %alpha;      
-    mad.rn.f32 %k_val, %denom, %neg_alpha, %k_val; 
-    abs.f32 %k_val, %k_val;
+    // Parameter aanpassing: k = k - alpha * (m / (sqrt(v) + epsilon))
+    neg.f64      %neg_alpha, %alpha;      
+    mad.rn.f64   %d_k, %denom, %neg_alpha, %d_k; 
+    abs.f64      %d_k, %d_k;                // k mag nooit negatief worden
 
-    add.u32 %epoch, %epoch, 1;        
-    setp.lt.u32 %p_valid, %epoch, 5000;
-    @%p_valid bra EPOCH_LOOP;
+    add.u32      %epoch, %epoch, 1;        
+    setp.lt.u32  %p_loop, %epoch, 5000;
+    @%p_loop bra EPOCH_LOOP;
 
-    setp.eq.u32 %p_valid, %gtid, 0;
-    @%p_valid st.global.f32 [%out_base], %k_val;
+    // Thread 0 schrijft de uiteindelijke f64 waarde van k weg naar VRAM
+    setp.eq.u32  %p_valid, %gtid, 0;
+    @%p_valid st.global.f64 [%out_base], %d_k;
 
 EXIT:
     ret;
 }
-

@@ -9,16 +9,16 @@ SRC_ROOT      := $(patsubst %/x86_64/$(NAME)/,%,$(patsubst %/kernels/$(NAME)/,%,
 
 # LAUNCH_ROOT context-bepaling
 ifndef LAUNCH_ROOT
-    export LAUNCH_ROOT := $(abspath $(CURRENT_DIR)/../../../)/
+	export LAUNCH_ROOT := $(abspath $(CURRENT_DIR)/../../../)/
 endif
 
 # Categorie scan via fysieke pad-analyse
 ifneq ($(findstring /projects/,$(CURRENT_DIR)),)
-    CATEGORY := projects
+	CATEGORY := projects
 else ifneq ($(findstring /cuda/,$(CURRENT_DIR)),)
-    CATEGORY := cuda
+	CATEGORY := cuda
 else
-    CATEGORY := .
+	CATEGORY := .
 endif
 
 MODE          ?= debug
@@ -31,28 +31,28 @@ HAS_ASM       := $(wildcard $(CURRENT_DIR)/$(NAME).s)
 
 # ANKERING VAN DE BUILD- EN BIN-TREES
 ifeq ($(CATEGORY),.)
-    BIN_DIR      := $(LAUNCH_ROOT)bin/$(MODE)/x86_64/$(NAME)
-    BUILD_DIR    := $(LAUNCH_ROOT)build/$(MODE)/x86_64/$(NAME)
-    KERNEL_BUILD := $(LAUNCH_ROOT)build/$(MODE)/kernels/$(NAME)
+	BIN_DIR      := $(LAUNCH_ROOT)bin/$(MODE)/x86_64/$(NAME)
+	BUILD_DIR    := $(LAUNCH_ROOT)build/$(MODE)/x86_64/$(NAME)
+	KERNEL_BUILD := $(LAUNCH_ROOT)build/$(MODE)/kernels/$(NAME)
 else
-    ifeq ($(LAST_LAUNCH),$(PROJECT_NAME))
-        BIN_DIR      := $(LAUNCH_ROOT)bin/$(MODE)/x86_64/$(NAME)
-        BUILD_DIR    := $(LAUNCH_ROOT)build/$(MODE)/x86_64/$(NAME)
-        KERNEL_BUILD := $(LAUNCH_ROOT)build/$(MODE)/kernels/$(NAME)
-    else
-        BIN_DIR      := $(LAUNCH_ROOT)bin/$(MODE)/$(CATEGORY)/x86_64/$(NAME)
-        BUILD_DIR    := $(LAUNCH_ROOT)build/$(MODE)/$(CATEGORY)/x86_64/$(NAME)
-        KERNEL_BUILD := $(LAUNCH_ROOT)build/$(MODE)/$(CATEGORY)/kernels/$(NAME)
-    endif
+	ifeq ($(LAST_LAUNCH),$(PROJECT_NAME))
+		BIN_DIR      := $(LAUNCH_ROOT)bin/$(MODE)/x86_64/$(NAME)
+		BUILD_DIR    := $(LAUNCH_ROOT)build/$(MODE)/x86_64/$(NAME)
+		KERNEL_BUILD := $(LAUNCH_ROOT)build/$(MODE)/kernels/$(NAME)
+	else
+		BIN_DIR      := $(LAUNCH_ROOT)bin/$(MODE)/$(CATEGORY)/x86_64/$(NAME)
+		BUILD_DIR    := $(LAUNCH_ROOT)build/$(MODE)/$(CATEGORY)/x86_64/$(NAME)
+		KERNEL_BUILD := $(LAUNCH_ROOT)build/$(MODE)/$(CATEGORY)/kernels/$(NAME)
+	endif
 endif
 
 # Fix build-pad als we een pure kernel aan het bouwen zijn
 ifneq ($(HAS_PTX),)
-    ifeq ($(LAST_LAUNCH),$(PROJECT_NAME))
-        BUILD_DIR := $(LAUNCH_ROOT)build/$(MODE)/kernels/$(NAME)
-    else
-        BUILD_DIR := $(LAUNCH_ROOT)build/$(MODE)/$(CATEGORY)/kernels/$(NAME)
-    endif
+	ifeq ($(LAST_LAUNCH),$(PROJECT_NAME))
+		BUILD_DIR := $(LAUNCH_ROOT)build/$(MODE)/kernels/$(NAME)
+	else
+		BUILD_DIR := $(LAUNCH_ROOT)build/$(MODE)/$(CATEGORY)/kernels/$(NAME)
+	endif
 endif
 
 # Paden naar headers, libraries en componenten
@@ -69,18 +69,28 @@ NVDISASM      := nvdisasm
 .SUFFIXES:
 %: %.c
 
+# --- DYNAMISCHE GPU ARCHITECTUUR DETECTIE ---
+DETECTED_CC := $(shell nvidia-smi --query-gpu=compute_cap --format=csv,noheader,nounits 2>/dev/null | head -n 1 | tr -d '.')
+
+ifneq ($(DETECTED_CC),)
+	GPU_ARCH := sm_$(DETECTED_CC)
+else
+	GPU_ARCH := sm_61
+endif
+
 ASFLAGS      := --64 -msyntax=att -mmnemonic=att -I$(BUILD_DIR) -I$(INC_DIR) -I$(LIB_DIR) -I$(KERNEL_DIR) -I$(KERNEL_BUILD)
 LDFLAGS      := -m elf_x86_64 -dynamic-linker /lib64/ld-linux-x86-64.so.2 -L/usr/local/cuda/lib64 -L/usr/lib/x86_64-linux-gnu -lcuda -lc -lcrypto -lssl
-PTXASFLAGS    := -v --gpu-name=sm_80
+PTXASFLAGS    := -v --gpu-name=$(GPU_ARCH)
 
 ifeq ($(MODE),debug)
-    ASFLAGS    += -g
-    LDFLAGS    += -g
-    PTXASFLAGS += --generate-line-info
-    MSG        := "Build Mode: DEBUG"
+	ASFLAGS    += -g
+	LDFLAGS    += -g
+	PTXASFLAGS += --generate-line-info
+	MSG        := "Build Mode: DEBUG (Target: $(GPU_ARCH))"
 else
-    LDFLAGS    += -s
-    MSG        := "Build Mode: RELEASE"
+	LDFLAGS    += -s
+	PTXASFLAGS += -O3
+	MSG        := "Build Mode: RELEASE (Target: $(GPU_ARCH))"
 endif
 
 all: debug
