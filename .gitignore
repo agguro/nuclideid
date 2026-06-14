@@ -21,9 +21,4 @@ data/
 *.fatbin
 *.optix
 
-# ==============================================================================
-# Financial Data Tracking Shield (Never leak local asset streams to GitHub)
-# ==============================================================================
-data/
-*.bin
-*.ticker
+# *.bin

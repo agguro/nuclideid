@@ -1,0 +1,468 @@
+/*
+ * ============================================================================
+ * Architecture : x86_64 | Linux SysV ABI | AT&T Syntax
+ * File         : fetch_isotopes.s
+ * Description  : Dual-Output Stream-Buffered In-Memory Chunked HTTP Decoder.
+ * Generates both 'isotopes.csv' and the binary matrix 'isotopes.bin'
+ * on-the-fly from the live network stream. Perfect for bitonic sorting.
+ * ============================================================================
+ */
+
+.global _start
+
+.section .rodata
+    host_ssl:     .asciz "nds.iaea.org:443"
+    sni_name:     .asciz "nds.iaea.org"
+
+    csv_file:     .string "isotopes.csv"
+    bin_file:     .string "isotopes.bin"
+
+    http_request:
+        .ascii "GET /relnsd/v1/data?fields=ground_states&nuclides=all HTTP/1.1\r\n"
+        .ascii "Host: nds.iaea.org\r\n"
+        .ascii "User-Agent: curl/7.81.0\r\n"
+        .ascii "Accept: */*\r\n"
+        .ascii "Connection: close\r\n\r\n"
+    http_len = . - http_request
+
+    msg_conn:     .asciz "Connecting... Streaming live to isotopes.csv and binary isotopes.bin...\n"
+    fmt_err:      .ascii "\033[1;31m[ERROR]\033[0m Fatal bare-metal OpenSSL, FPU or I/O error.\n"
+    fmt_err_l = . - fmt_err
+
+.section .data
+    .align 8
+    ctx:          .quad 0
+    bio:          .quad 0
+    ssl_ptr:      .quad 0
+    csv_fd:       .quad 0
+    bin_fd:       .quad 0
+
+    # Storage slots to guard loop boundary registers over system calls
+    buf_end:      .quad 0
+    buf_ptr:      .quad 0
+
+    # Live parser state machine variables
+    .align 8
+    line_started: .quad 0
+    comma_count:  .quad 0
+    hl_ptr:       .quad 0
+
+.section .bss
+    .align 16
+    net_buffer:   .space 4096
+    db_record:    .space 24             # Layout: Z(4), N(4), A(4), Symbol(4), k(8)
+    ascii_hl:     .space 64
+
+.section .text
+_start:
+    # Ensure strict 16-byte stack alignment for OpenSSL and libc PLT execution
+    pushq   %rbp
+    movq    %rsp, %rbp
+    andq    $-16, %rsp
+    subq    $16, %rsp
+
+    # --- Print status notification via sys_write ---
+    movq    $1, %rax
+    movq    $1, %rdi
+    leaq    msg_conn(%rip), %rsi
+    movq    $76, %rdx
+    syscall
+
+    # ==========================================================================
+    # 1. ALLOCATE TARGET FILES (isotopes.csv AND isotopes.bin)
+    # ==========================================================================
+    movq    $2, %rax                        # sys_open isotopes.csv
+    leaq    csv_file(%rip), %rdi
+    movq    $0x242, %rsi                    # O_RDWR|O_CREAT|O_TRUNC
+    movq    $0644, %rdx
+    syscall
+    js      error_exit
+    movq    %rax, csv_fd(%rip)
+
+    movq    $2, %rax                        # sys_open isotopes.bin
+    leaq    bin_file(%rip), %rdi
+    movq    $0x242, %rsi
+    movq    $0644, %rdx
+    syscall
+    js      error_exit
+    movq    %rax, bin_fd(%rip)
+
+    # ==========================================================================
+    # 2. INITIALIZE SECURE OPENSSL TLS PIPELINE (PORT 443)
+    # ==========================================================================
+    xorq    %rdi, %rdi
+    xorq    %rsi, %rsi
+    call    OPENSSL_init_ssl@PLT
+    call    TLS_client_method@PLT
+    movq    %rax, %rdi
+    call    SSL_CTX_new@PLT
+    movq    %rax, ctx(%rip)
+
+    movq    ctx(%rip), %rdi
+    call    BIO_new_ssl_connect@PLT
+    movq    %rax, bio(%rip)
+
+    movq    bio(%rip), %rdi
+    movl    $100, %esi                      # BIO_C_SET_CONNECT
+    xorq    %rdx, %rdx
+    leaq    host_ssl(%rip), %rcx
+    call    BIO_ctrl@PLT
+
+    movq    bio(%rip), %rdi
+    movl    $110, %esi                      # BIO_C_GET_SSL
+    xorq    %rdx, %rdx
+    leaq    ssl_ptr(%rip), %rcx
+    call    BIO_ctrl@PLT
+
+    movq    ssl_ptr(%rip), %rdi
+    movl    $55, %esi                       # SSL_CTRL_SET_TLSEXT_HOSTNAME
+    movq    $0, %rdx
+    leaq    sni_name(%rip), %rcx
+    call    SSL_ctrl@PLT
+
+    # Execute TLS Handshake
+    movq    bio(%rip), %rdi
+    movl    $101, %esi                      # BIO_C_DO_STATE_MACHINE
+    xorq    %rdx, %rdx
+    xorq    %rcx, %rcx
+    call    BIO_ctrl@PLT
+    testq   %rax, %rax
+    jle     error_exit
+
+    # Inject HTTP Payload
+    movq    bio(%rip), %rdi
+    leaq    http_request(%rip), %rsi
+    movq    $http_len, %rdx
+    call    BIO_write@PLT
+
+    # ==========================================================================
+    # 3. INITIALIZE IN-MEMORY AUTOMAAT REGISTERS
+    # ==========================================================================
+    # %r15 = Active Parser State (0=Header, 1=Hex Size, 2=Data Writer, 3=Trailer)
+    # %rbx = Active Chunk Size Counter (Callee-saved persistent anchor)
+    xorq    %r15, %r15
+    xorq    %rbx, %rbx
+
+FETCH_NETWORK_BLOCK:
+    leaq    net_buffer(%rip), %rsi
+    movq    bio(%rip), %rdi
+    movq    $4096, %rdx
+    call    BIO_read@PLT
+    testq   %rax, %rax
+    jle     ENGINE_COMPLETE
+
+    leaq    net_buffer(%rip), %r12
+    movq    %r12, %r11
+    addq    %rax, %r11
+
+PROCESS_BUFFER_BYTES:
+    cmpq    %r11, %r12
+    jae     FETCH_NETWORK_BLOCK
+
+    movzbq  (%r12), %rax
+    incq    %r12
+
+EXECUTE_STATE_AUTOMAAT:
+    cmpq    $0, %r15
+    je      STATE_0_HEADERS
+    cmpq    $1, %r15
+    je      STATE_1_HEX
+    cmpq    $2, %r15
+    je      STATE_2_PARSER
+    cmpq    $3, %r15
+    je      STATE_3_TRAILER
+    jmp     PROCESS_BUFFER_BYTES
+
+# --- STATE 0: Strip HTTP Response Headers via Sequential Matching ---
+STATE_0_HEADERS:
+    cmpq    $0, %rbx
+    je      .L_check_r_0
+    cmpq    $1, %rbx
+    je      .L_check_n_1
+    cmpq    $2, %rbx
+    je      .L_check_r_2
+    cmpq    $3, %rbx
+    je      .L_check_n_3
+    jmp     PROCESS_BUFFER_BYTES
+
+.L_check_r_0:
+    cmpb    $13, %al
+    jne     .L_reset_header_counter
+    movq    $1, %rbx
+    jmp     PROCESS_BUFFER_BYTES
+
+.L_check_n_1:
+    cmpb    $10, %al
+    jne     .L_check_r_again
+    movq    $2, %rbx
+    jmp     PROCESS_BUFFER_BYTES
+
+.L_check_r_2:
+    cmpb    $13, %al
+    jne     .L_reset_header_counter
+    movq    $3, %rbx
+    jmp     PROCESS_BUFFER_BYTES
+
+.L_check_n_3:
+    cmpb    $10, %al
+    jne     .L_reset_header_counter
+    movq    $1, %r15                        # Headers stripped -> Go to State 1
+    xorq    %rbx, %rbx
+    jmp     PROCESS_BUFFER_BYTES
+
+.L_check_r_again:
+    cmpb    $13, %al
+    jne     .L_reset_header_counter
+    movq    $1, %rbx
+    jmp     PROCESS_BUFFER_BYTES
+
+.L_reset_header_counter:
+    xorq    %rbx, %rbx
+    jmp     PROCESS_BUFFER_BYTES
+
+# --- STATE 1: Decode Chunk Size Hex Strings ---
+STATE_1_HEX:
+    cmpb    $13, %al
+    je      PROCESS_BUFFER_BYTES
+    cmpb    $10, %al
+    je      HEX_PARSING_COMPLETED
+
+    shlq    $4, %rbx
+    cmpb    $58, %al
+    jl      NUM_BYTE
+    cmpb    $97, %al
+    jl      CAPS_BYTE
+    subb    $87, %al
+    jmp     MERGE_BYTE
+CAPS_BYTE:
+    subb    $55, %al
+    jmp     MERGE_BYTE
+NUM_BYTE:
+    subb    $48, %al
+MERGE_BYTE:
+    movzbq  %al, %rax
+    addq    %rax, %rbx
+    jmp     PROCESS_BUFFER_BYTES
+
+HEX_PARSING_COMPLETED:
+    testq   %rbx, %rbx
+    jz      ENGINE_COMPLETE                 # Terminal chunk (0) -> End of stream
+    movq    $2, %r15                        # Shift to State 2 (Dual Matrix Parser)
+    jmp     PROCESS_BUFFER_BYTES
+
+# ==============================================================================
+# --- STATE 2: DUAL-WRITER IN-MEMORY PARSER & MATRIX COMPILER ---
+# ==============================================================================
+STATE_2_PARSER:
+    pushq   %rbx                            # Safeguard chunk length counter
+
+    # --- ACTION A: Safely stream raw byte to isotopes.csv (ABI-Proof Stack Hook) ---
+    movq    %rax, %r10                      # Save current char in %r10
+    pushq   %rax                            # Push character byte to stack layout
+    pushq   %rcx                            # Protect loop counter %rcx from syscall destruction
+    pushq   %r11                            # Protect loop boundary %r11 from syscall destruction
+
+    movq    $1, %rax                        # sys_write
+    movq    csv_fd(%rip), %rdi
+    leaq    16(%rsp), %rsi                  # Compute memory address pointing to the pushed char
+    movq    $1, %rdx
+    syscall
+
+    popq    %r11                            # Restore loop boundary register intact
+    popq    %rcx                            # Restore loop counter intact
+    popq    %rax                            # Clean character from stack
+    movq    %r10, %rax                      # Restore character to %rax for parsing engine
+
+    # --- ACTION B: Vectorial Matrix Field Extraction ---
+    cmpb    $10, %al
+    je      .L_handle_newline
+
+    movq    line_started(%rip), %rdx
+    testq   %rdx, %rdx
+    jz      .L_byte_processed_pop           # Ignore online headers for binary file
+
+    cmpb    $44, %al
+    je      .L_handle_comma
+
+    movq    comma_count(%rip), %rdx
+    cmpq    $0, %rdx
+    je      .L_accumulate_z
+    cmpq    $1, %rdx
+    je      .L_accumulate_n
+    cmpq    $2, %rdx                        # Column 3 = Text Symbol (Index 2)
+    je      .L_accumulate_sym
+    cmpq    $16, %rdx                       # Column 17 = half_life_sec (Index 16)
+    je      .L_accumulate_hl
+    jmp     .L_byte_processed_pop
+
+.L_accumulate_z:
+    movl    (db_record + 0)(%rip), %ecx
+    imull   $10, %ecx
+    movzbl  %al, %eax
+    subl    $48, %eax
+    addl    %eax, %ecx
+    movl    %ecx, (db_record + 0)(%rip)
+    jmp     .L_byte_processed_pop
+
+.L_accumulate_n:
+    movl    (db_record + 4)(%rip), %ecx
+    imull   $10, %ecx
+    movzbl  %al, %eax
+    subl    $48, %eax
+    addl    %eax, %ecx
+    movl    %ecx, (db_record + 4)(%rip)
+    jmp     .L_byte_processed_pop
+
+.L_accumulate_sym:
+    # Build text lane directly on offset 12 (Max 3 characters wide for qsort alignment)
+    movq    hl_ptr(%rip), %rdx              # Re-purpose hl_ptr as temporary char pointer
+    cmpq    $3, %rdx
+    jae     .L_byte_processed_pop
+    leaq    db_record+12(%rip), %rcx
+    movb    %al, (%rcx, %rdx)
+    incq    %rdx
+    movq    %rdx, hl_ptr(%rip)
+    jmp     .L_byte_processed_pop
+
+.L_accumulate_hl:
+    movq    hl_ptr(%rip), %rdx
+    leaq    ascii_hl(%rip), %rcx
+    movb    %al, (%rcx, %rdx)
+    incq    %rdx
+    movq    %rdx, hl_ptr(%rip)
+    jmp     .L_byte_processed_pop
+
+.L_handle_comma:
+    movq    comma_count(%rip), %rdx
+
+    # CRITICAL TRACKING: Null-terminate half_life_sec field right before column index increments
+    cmpq    $16, %rdx
+    jne     .L_skip_hl_termination
+    movq    hl_ptr(%rip), %r8
+    leaq    ascii_hl(%rip), %rcx
+    movb    $0, (%rcx, %r8)
+.L_skip_hl_termination:
+
+    incq    %rdx
+    movq    %rdx, comma_count(%rip)
+    movq    $0, hl_ptr(%rip)                # Reset character index for next column
+    jmp     .L_byte_processed_pop
+
+.L_handle_newline:
+    movq    line_started(%rip), %rdx
+    testq   %rdx, %rdx
+    jnz     .L_commit_binary_record
+
+    movq    $1, line_started(%rip)          # Header line consumed -> Activate matrix engine
+    jmp     .L_reset_row_state
+
+.L_commit_binary_record:
+    # Compute Mass Number A = Z + N and store on offset 8
+    movl    (db_record + 0)(%rip), %eax
+    addl    (db_record + 4)(%rip), %eax
+    movl    %eax, (db_record + 8)(%rip)
+
+    # SECURE REGISTERS: Backup loop parameters before triggering external libraries
+    movq    %r11, buf_end(%rip)
+    movq    %r12, buf_ptr(%rip)
+
+    # Evaluate stable or radioactive state
+    movb    ascii_hl(%rip), %al
+    testb   %al, %al
+    jz      .L_db_stable
+    cmpb    $83, %al                        # Check for 'S' (STABLE)
+    je      .L_db_stable
+
+    # Parse exponential string to float using strtod
+    leaq    ascii_hl(%rip), %rdi
+    xorq    %rsi, %rsi
+    call    strtod@PLT                      # Float result populates %xmm0
+
+    # Execute FPU calculation: k = ln(2) / T_{1/2}
+    movsd   %xmm0, (db_record + 16)(%rip)
+    fldl    (db_record + 16)(%rip)          # ST(0) = T_{1/2}
+    fldln2                                  # ST(0) = ln(2), ST(1) = T_{1/2}
+    fdivp   %st, %st(1)                     # ST(0) = ln(2) / T_{1/2}
+    fstpl   (db_record + 16)(%rip)          # Store back on offset 16 as double precision
+    jmp     .L_write_bin_file
+
+.L_db_stable:
+    movq    $0, (db_record + 16)(%rip)      # Stable -> k = 0.0
+
+.L_write_bin_file:
+    # Append the aligned 24-byte record directly to isotopes.bin
+    movq    $1, %rax                        # sys_write
+    movq    bin_fd(%rip), %rdi
+    leaq    db_record(%rip), %rsi
+    movq    $24, %rdx
+    syscall
+
+    # RESTORE LOCKS: Recover network boundary variables safely (ABI Compliant)
+    movq    buf_end(%rip), %r11
+    movq    buf_ptr(%rip), %r12
+
+.L_reset_row_state:
+    movq    $0, comma_count(%rip)
+    movq    $0, hl_ptr(%rip)
+    movl    $0, (db_record + 0)(%rip)
+    movl    $0, (db_record + 4)(%rip)
+    movl    $0, (db_record + 8)(%rip)
+    movl    $0, (db_record + 12)(%rip)      # Erase symbol block
+
+.L_byte_processed_pop:
+    popq    %rbx                            # Restore remaining chunk counter
+    decq    %rbx
+    jnz     PROCESS_BUFFER_BYTES
+    movq    $3, %r15                        # Chunk empty -> Go to trailer state
+    jmp     PROCESS_BUFFER_BYTES
+
+# --- STATE 3: Consume Trailing \r\n Linebreaks ---
+STATE_3_TRAILER:
+    cmpb    $13, %al
+    je      PROCESS_BUFFER_BYTES
+    cmpb    $10, %al
+    jne     PROCESS_BUFFER_BYTES
+    movq    $1, %r15                        # Shift back to chunk tracking
+    xorq    %rbx, %rbx
+    jmp     PROCESS_BUFFER_BYTES
+
+# ==============================================================================
+# 4. STREAMING ENGINE COMPLETE: RESOURCE DISPOSAL
+# ==============================================================================
+ENGINE_COMPLETE:
+    movq    bio(%rip), %rdi
+    call    BIO_free_all@PLT
+    movq    ctx(%rip), %rdi
+    call    SSL_CTX_free@PLT
+
+    movq    $3, %rax                        # Close isotopes.csv
+    movq    csv_fd(%rip), %rdi
+    syscall
+
+    movq    $3, %rax                        # Close isotopes.bin
+    movq    bin_fd(%rip), %rdi
+    syscall
+
+    # Terminate process safely via exit 0
+    addq    $16, %rsp
+    movq    %rbp, %rsp
+    popq    %rbp
+    movq    $60, %rax
+    xorq    %rdi, %rdi
+    syscall
+
+error_exit:
+    movq    $1, %rax
+    movq    $2, %rdi
+    leaq    fmt_err(%rip), %rsi
+    movq    $fmt_err_l, %rdx
+    syscall
+    addq    $16, %rsp
+    movq    %rbp, %rsp
+    popq    %rbp
+    movq    $60, %rax
+    movq    $1, %rdi
+    syscall
+
+.size _start, . - _start
+.section .note.GNU-stack,"",@progbits

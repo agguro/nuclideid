@@ -1,15 +1,13 @@
 # ==============================================================================
-# ASM-LINUX-FRAMEWORK: UNIVERSELE ORCHESTRATOR (Root Makefile)
+# ASM-LINUX-FRAMEWORK: SUBMODULE ROOT ORCHESTRATOR
+# BPI-BLUEPRINT: .blueprints/submodule_root.mk
 # ==============================================================================
 
-# 1. TOOLCHAIN DETECTION & VALIDATION
-PTXAS    := $(shell which ptxas 2>/dev/null)
-NVDISASM := $(shell which nvdisasm 2>/dev/null)
-
-ifeq ($(PTXAS),)
-    $(error CRITICAL: 'ptxas' not found in $$PATH. Please install nvidia-cuda-toolkit!)
+ifndef LAUNCH_ROOT
+    export LAUNCH_ROOT := $(abspath $(CURDIR))/
 endif
 
+<<<<<<< HEAD
 ifeq ($(NVDISASM),)
     $(error CRITICAL: 'nvdisasm' not found in $$PATH. Please install nvidia-cuda-toolkit!)
 endif
@@ -32,26 +30,17 @@ endif
 
 GLOBAL_BUILD := $(PROJECT_ROOT)build
 GLOBAL_BIN   := $(PROJECT_ROOT)bin
+=======
+SUBDIRS := kernels x86_64
+>>>>>>> 41fdc72c88f8c05df01e5a55b84b24c38abc7efc
 
 all: debug
 
-# 3. DIRECT EXECUTION LOOP
-debug release clean test: directories
+debug release clean test install:
 	@for dir in $(SUBDIRS); do \
-		echo "=============================================================================="; \
-		echo "Entering Target Directory: $$dir -> Target: $@"; \
-		echo "=============================================================================="; \
-		$(MAKE) -C $$dir $@ || exit 1; \
+		if [ -d $$dir ] && [ -f $$dir/Makefile ]; then \
+			$(MAKE) -C $$dir LAUNCH_ROOT=$(LAUNCH_ROOT) $@ || exit 1; \
+		fi \
 	done
 
-# 4. UTILITIES
-directories:
-	@mkdir -p $(GLOBAL_BUILD)
-	@mkdir -p $(GLOBAL_BIN)
-
-deep_clean:
-	@echo "Removing centralized build and binary directories..."
-	rm -rf $(GLOBAL_BUILD) $(GLOBAL_BIN)
-
-.PHONY: all debug release clean test directories deep_clean
-
+.PHONY: all debug release clean test install
