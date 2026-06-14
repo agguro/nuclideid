@@ -15,7 +15,13 @@ ifeq ($(NVDISASM),)
 endif
 
 # 2. DYNAMIC DISCOVERY & PARAMETERS
-SUBDIRS      := $(patsubst %/,%,$(dir $(shell find . -mindepth 2 -maxdepth 2 -name Makefile)))
+# 2. DYNAMIC DISCOVERY & PARAMETERS
+ALL_DISCOVERED := $(patsubst %/,%,$(dir $(shell find . -mindepth 2 -maxdepth 2 -name Makefile)))
+
+# We filteren de kernels eruit en zetten ze ALTIJD vooraan in de rij!
+KERNEL_DIRS    := $(filter ./kernels%,$(ALL_DISCOVERED))
+OTHER_DIRS     := $(filter-out ./kernels%,$(ALL_DISCOVERED))
+SUBDIRS        := $(KERNEL_DIRS) $(OTHER_DIRS)
 
 # We zetten de wet voor de absolute project root vast en exporteren deze direct!
 export PROJECT_ROOT := $(CURDIR)/

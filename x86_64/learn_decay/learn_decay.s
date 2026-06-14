@@ -3,7 +3,6 @@
 .section .rodata
     db_file:     .string "isotopes.db"
     data_file:   .string "data.bin"
-    ptx_file:    .string "adam_decay_solver.cubin"
     func_name:   .string "learnDecayK"
     
     fmt_start:   .ascii "\033[1;34m[nuclideid]\033[0m Starting standalone hardware inference...\n"
@@ -20,6 +19,15 @@
 
     fmt_nocuda:   .ascii "\033[1;31m[ERROR]\033[0m No NVIDIA GPU or driver detected on this system.\n"
     fmt_nocuda_l: .long . - fmt_nocuda
+
+    fmt_nomod:    .ascii "\033[1;31m[ERROR]\033[0m Loaded CUDA data is corrupt or rejected by driver.\n"
+    fmt_nomod_l:  .long . - fmt_nomod
+
+    # Strikte 8-byte alignment voor de ingebakken CUBIN data
+    .align 8
+cubin_start:
+    .incbin "learn_decay.cubin"
+cubin_end:
 
 .section .data
     .align 8
@@ -151,10 +159,12 @@ _start:
     movl    $4096, %edx
     call    cuMemcpyHtoD@PLT
 
-    # Laad de AOT-gecompileerde cubin module
-    leaq    cu_module(%rip), %rdi
-    leaq    ptx_file(%rip), %rsi
-    call    cuModuleLoad@PLT
+    # IN-MEMORY MODULE LOADING (Geen schijfafhankelijkheid meer)
+    leaq    cu_module(%rip), %rdi       # %rdi = Bestemming voor module handle
+    leaq    cubin_start(%rip), %rsi     # %rsi = Adres van ingebakken CUBIN data in RAM
+    call    cuModuleLoadData@PLT
+    testl   %eax, %eax
+    jnz     .L_mod_error
     
     leaq    cu_function(%rip), %rdi
     movq    cu_module(%rip), %rsi
@@ -330,6 +340,18 @@ print_uint:
     popq    %rbp
     movl    $60, %eax
     movl    $1, %edi              # Exit code 1
+    syscall
+
+.L_mod_error:
+    movl    $1, %eax              # sys_write
+    movl    $2, %edi              # stderr
+    leaq    fmt_nomod(%rip), %rsi
+    movl    fmt_nomod_l(%rip), %edx
+    syscall
+    movq    %rbp, %rsp
+    popq    %rbp
+    movl    $60, %eax
+    movl    $1, %edi
     syscall
 
 .size _start, . - _start

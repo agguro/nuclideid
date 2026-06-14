@@ -1,30 +1,57 @@
+/*
+ * ============================================================================
+ * Architecture : x86_64 | Linux SysV ABI | AT&T Syntax
+ * Description  : Standalone SSL IAEA Ingestion & GPU Bitonic Merge Sort Pipeline
+ * ============================================================================
+ */
+
 .global _start
 
 .section .rodata
-    host_name:    .string "www-nds.iaea.org"
-    port_str:     .string "80"
-    ptx_file:     .string "bitonic_sort.cubin"
-    func_name:    .string "bitonic_sort"
-    out_file:     .string "isotopes.db"
+    # SSL Netwerk Parameters
+    host:          .asciz "www-nds.iaea.org:443"
+    host_name_sni: .asciz "www-nds.iaea.org"
+    func_name:     .string "bitonic_sort"
+    out_file:      .string "isotopes.db"
     
-    # Cloudflare WAF Browser Integrity Check Bypassing Header Block
+    # Kogelvrije HTTP Headers - Browser Footprint
     http_request:
         .ascii "GET /relnsd/v1/data?fields=ground_states&nuclides=all HTTP/1.1\r\n"
         .ascii "Host: www-nds.iaea.org\r\n"
-        .ascii "User-Agent: Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36\r\n"
-        .ascii "Accept: text/csv\r\n"
+        .ascii "User-Agent: Mozilla/5.0 (X11; Linux x86_64; rv:120.0) Gecko/20100101 Firefox/120.0\r\n"
+        .ascii "Accept: text/csv,text/plain\r\n"
+        .ascii "Accept-Language: en-US,en;q=0.5\r\n"
         .ascii "Connection: close\r\n\r\n"
     http_len = . - http_request
 
     .align 4
     ln2:          .float 0.69314718
-    k_inf:        .float 99999.0      # Oneindig hoge k-waarde voor dummy sinking
+    k_inf:        .float 99999.0      
 
-    fmt_nocuda:   .ascii "\033[1;31m[ERROR]\033[0m No NVIDIA GPU or driver detected on this system.\n"
+    # Diagnostic Foutmeldingen
+    fmt_nocuda:   .ascii "\033[1;31m[ERROR]\033[0m No NVIDIA GPU detected.\n"
     fmt_nocuda_l: .long . - fmt_nocuda
+    fmt_nomod:    .ascii "\033[1;31m[ERROR]\033[0m CUDA Module rejection.\n"
+    fmt_nomod_l:  .long . - fmt_nomod
+    fmt_neterr:   .ascii "\033[1;31m[SSL ERROR]\033[0m Cloudflare or TLS handshake rejected client.\n"
+    fmt_neterr_l: .long . - fmt_neterr
+
+    BIO_C_SET_CONNECT = 100
+    BIO_C_DO_STATE_MACHINE = 101
+    BIO_C_GET_SSL = 105
+
+    # Strikte 8-byte alignment voor de ingebakken CUBIN data via jouw framework
+    .align 8
+cubin_start:
+    .incbin "nuclidedb_generator.cubin"
+cubin_end:
 
 .section .data
     .align 8
+    ctx:          .quad 0
+    bio:          .quad 0
+    total_read:   .quad 0
+
     cu_ctx:       .quad 0
     cu_device:    .long 0
     cu_module:    .quad 0
@@ -42,106 +69,159 @@
 
     p_j_val:      .long 0
     p_k_val:      .long 0
-    hints:        .zero 48            
 
 .section .bss
+    .align 4096
+    net_buffer:   .space 524288       
     .align 16
-    net_buffer:   .space 524288       # 512 KB network buffer
-    
-    .align 16
-    database:     .space 131072       # 4096 records * 32 bytes = 128 KB
-    
-    res_addrinfo: .quad 0
-    sock_fd:      .quad 0
+    database:     .space 131072       
 
 .section .text
 _start:
-    # Garandeer strikte x86_64 ABI stack-alignment
+    # Garandeer strikte x86_64 ABI stack-alignment + 16 bytes local frame space
     pushq   %rbp
     movq    %rsp, %rbp
     andq    $-16, %rsp
+    subq    $16, %rsp
 
     # ==========================================
-    # 1. RAW NETWORK SOCKET FETCH (IAEA INGESTIE)
+    # 1. SECURE INITIALIZATION & STACK-SAFE SNI
     # ==========================================
-    movl    $2, (hints + 4)(%rip)     # ai_family = AF_INET (IPv4)
-    movl    $1, (hints + 8)(%rip)     # ai_socktype = SOCK_STREAM
+    xorq    %rdi, %rdi
+    xorq    %rsi, %rsi
+    call    OPENSSL_init_ssl@PLT
+    
+    call    TLS_client_method@PLT
+    movq    %rax, %rdi
+    call    SSL_CTX_new@PLT
+    movq    %rax, ctx(%rip)
 
-    leaq    host_name(%rip), %rdi
-    leaq    port_str(%rip), %rsi
-    leaq    hints(%rip), %rdx
-    leaq    res_addrinfo(%rip), %rcx
-    call    getaddrinfo@PLT
-    testl   %eax, %eax
-    jnz     error_exit
+    movq    ctx(%rip), %rdi
+    call    BIO_new_ssl_connect@PLT
+    movq    %rax, bio(%rip)
 
-    movq    res_addrinfo(%rip), %rax
-    movl    4(%rax), %edi             
-    movl    8(%rax), %esi             
-    movl    12(%rax), %edx            
-    call    socket@PLT
-    movq    %rax, sock_fd(%rip)
+    # Configureer connection target
+    movq    bio(%rip), %rdi
+    movq    $BIO_C_SET_CONNECT, %rsi
+    xorq    %rdx, %rdx
+    leaq    host(%rip), %rcx
+    call    BIO_ctrl@PLT
 
-    movq    sock_fd(%rip), %rdi
-    movq    res_addrinfo(%rip), %rax
-    movq    24(%rax), %rsi            
-    movl    16(%rax), %edx            
-    call    connect@PLT
-    testl   %eax, %eax
-    js      error_exit
+    # --- SNI INTERN SSL POINTER EXTRACTION (STACK-PROOF) ---
+    # We reserveren 8 bytes op de stack om de volatile register bypass uit te voeren
+    subq    $8, %rsp                   
+    movq    bio(%rip), %rdi
+    movq    $BIO_C_GET_SSL, %rsi       # 105
+    xorl    %edx, %edx                 
+    movq    %rsp, %rcx                 # Schrijf direct naar de actieve stack pointer location
+    call    BIO_ctrl@PLT
 
-    movq    sock_fd(%rip), %rdi
+    # Haal het resultaat op van de stack en reinig de stack direct
+    movq    (%rsp), %rdi                   
+    addq    $8, %rsp                   
+    testq   %rdi, %rdi
+    jz      .L_network_error           
+
+    # Directe aanroep van SSL_ctrl (Platgeslagen macro bypass voor SSL_set_tlsext_host_name)
+    # %rdi bevat al de ongeschonden interne SSL pointer
+    movq    $55, %rsi                  # 55 = SSL_CTRL_SET_TLSEXT_HOSTNAME
+    xorl    %edx, %edx                 
+    leaq    host_name_sni(%rip), %rcx  # Pointer naar pure host string zonder poort
+    call    SSL_ctrl@PLT
+
+    # Start secure state machine handshake
+    movq    bio(%rip), %rdi
+    movq    $BIO_C_DO_STATE_MACHINE, %rsi
+    xorq    %rdx, %rdx
+    xorq    %rcx, %rcx
+    call    BIO_ctrl@PLT
+    testq   %rax, %rax
+    jle     .L_network_error
+
+    # Push gecodeerde HTTP/1.1 headers over de TLS-tunnel
+    movq    bio(%rip), %rdi
     leaq    http_request(%rip), %rsi
     movq    $http_len, %rdx
-    xorq    %rcx, %rcx                     
-    call    send@PLT
-
-    leaq    net_buffer(%rip), %r12            
-READ_STREAM_LOOP:
-    movq    sock_fd(%rip), %rdi
-    movq    %r12, %rsi
-    movq    $4096, %rdx                    
-    xorq    %rcx, %rcx
-    call    recv@PLT
-    testq   %rax, %rax
-    jle     CLOSE_SOCKET                 
-    addq    %rax, %r12                     
-    jmp     READ_STREAM_LOOP
-
-CLOSE_SOCKET:
-    movq    sock_fd(%rip), %rdi
-    call    close@PLT
+    call    BIO_write@PLT
 
     # ==========================================
-    # 2. IN-MEMORY PARSER & STRUCTUREERDER
+    # 2. ACCUMULATION STREAM LOOP
+    # ==========================================
+    movq    $0, total_read(%rip)
+
+.L_accumulation_loop:
+    leaq    net_buffer(%rip), %rsi
+    addq    total_read(%rip), %rsi            
+    
+    movq    bio(%rip), %rdi
+    movq    $4096, %rdx                 
+    call    BIO_read@PLT
+    testq   %rax, %rax
+    jle     .L_close_ssl_stream
+
+    addq    %rax, total_read(%rip)
+    jmp     .L_accumulation_loop
+
+.L_close_ssl_stream:
+    leaq    net_buffer(%rip), %rax
+    addq    total_read(%rip), %rax
+    movb    $0, (%rax)
+
+    movq    bio(%rip), %rdi
+    call    BIO_free_all@PLT
+    movq    ctx(%rip), %rdi
+    call    SSL_CTX_free@PLT
+
+    movq    total_read(%rip), %rax
+    testq   %rax, %rax
+    jz      PADDING_DATABASE
+
+    # ==========================================
+    # 3. IN-MEMORY PARSER (Unix/Windows Adaptive)
     # ==========================================
     leaq    net_buffer(%rip), %rsi            
     leaq    database(%rip), %rdi              
     xorl    %r13d, %r13d                   
+    
+    leaq    net_buffer(%rip), %r12
+    addq    total_read(%rip), %r12
 
-SKIP_HTTP_HEADER:
-    cmpq    %r12, %rsi
-    jge     PADDING_DATABASE
+.L_skip_http_header:
+    # 4-byte vooruitblikkende safety-bounds lock tegen out-of-bounds scanning
+    movq    %r12, %rax
+    subq    $4, %rax
+    cmpq    %rax, %rsi
+    jae     PADDING_DATABASE
+
     movl    (%rsi), %eax
-    cmpl    $0x0A0D0A0D, %eax              
-    je      FOUND_DATA_START
+    cmpl    $0x0A0D0A0D, %eax              # Match \r\n\r\n
+    je      .L_found_data_start_rnrn
+    
+    andl    $0x0000FFFF, %eax              
+    cmpl    $0x0A0A, %eax                  # Match \n\n Unix style marker fallback
+    je      .L_found_data_start_nn
+
     incq    %rsi
-    jmp     SKIP_HTTP_HEADER
+    jmp     .L_skip_http_header
 
-FOUND_DATA_START:
+.L_found_data_start_rnrn:
     addq    $4, %rsi                       
+    jmp     .L_skip_csv_header
 
-SKIP_CSV_HEADER:
+.L_found_data_start_nn:
+    addq    $2, %rsi                       
+
+.L_skip_csv_header:
     cmpq    %r12, %rsi
-    jge     PADDING_DATABASE
+    jae     PADDING_DATABASE
     movb    (%rsi), %al
     incq    %rsi
     cmpb    $10, %al                       
-    jne     SKIP_CSV_HEADER
+    jne     .L_skip_csv_header
 
 PARSE_RECORD_LINE:
     cmpq    %r12, %rsi
-    jge     PADDING_DATABASE
+    jae     PADDING_DATABASE
     cmpl    $3388, %r13d                   
     jge     PADDING_DATABASE
 
@@ -222,7 +302,7 @@ CALC_K_DIRECT:
     jmp     PARSE_RECORD_LINE
 
     # ==========================================
-    # 3. POWER OF 2 PADDING
+    # 4. POWER OF 2 PADDING
     # ==========================================
 PADDING_DATABASE:
     cmpl    $4096, %r13d
@@ -239,13 +319,11 @@ PADDING_DATABASE:
     jmp     PADDING_DATABASE
 
     # ==========================================
-    # 4. GPU BITONIC MERGE SORT SYSTEM
+    # 5. GPU BITONIC MERGE SORT SYSTEM
     # ==========================================
 PREPARE_CUDA_SORT:
     xorl    %edi, %edi
     call    cuInit@PLT
-    testl   %eax, %eax
-    jnz     .L_cuda_error
 
     leaq    cu_device(%rip), %rdi
     xorl    %esi, %esi
@@ -264,9 +342,12 @@ PREPARE_CUDA_SORT:
     movl    $131072, %edx
     call    cuMemcpyHtoD@PLT
 
-    leaq    cu_module(%rip), %rdi
-    leaq    ptx_file(%rip), %rsi
-    call    cuModuleLoad@PLT
+    leaq    cu_module(%rip), %rdi       
+    leaq    cubin_start(%rip), %rsi     
+    call    cuModuleLoadData@PLT
+    testl   %eax, %eax
+    jnz     .L_mod_error
+
     leaq    cu_function(%rip), %rdi
     movq    cu_module(%rip), %rsi
     leaq    func_name(%rip), %rdx
@@ -316,9 +397,6 @@ CUDA_NEXT_OUTER:
     shll    $1, p_k_val(%rip)
     jmp     CUDA_OUTER_LOOP
 
-    # ==========================================
-    # 5. COMMIT NAAR LOCAL DISK (isotopes.db)
-    # ==========================================
 DOWNLOAD_SORTED_DB:
     leaq    database(%rip), %rdi
     movq    d_db_ptr(%rip), %rsi
@@ -342,26 +420,30 @@ DOWNLOAD_SORTED_DB:
     movq    %r14, %rdi
     syscall
 
-    # Herstel stack frame en sluit clean af
+    addq    $16, %rsp
     movq    %rbp, %rsp
     popq    %rbp
-    movl    $60, %eax             # sys_exit
+    movl    $60, %eax             
     xorl    %edi, %edi
     syscall
 
-.L_cuda_error:
-    movl    $1, %eax              # sys_write
-    movl    $2, %edi              # stderr
-    leaq    fmt_nocuda(%rip), %rsi
-    movl    fmt_nocuda_l(%rip), %edx
+.L_mod_error:
+    movl    $1, %eax              
+    movl    $2, %edi              
+    leaq    fmt_nomod(%rip), %rsi
+    movl    fmt_nomod_l(%rip), %edx
     syscall
-    movq    %rbp, %rsp
-    popq    %rbp
-    movl    $60, %eax
-    movl    $1, %edi
+    jmp     .L_panic_exit
+
+.L_network_error:
+    movl    $1, %eax              
+    movl    $2, %edi              
+    leaq    fmt_neterr(%rip), %rsi
+    movl    fmt_neterr_l(%rip), %edx
     syscall
 
-error_exit:
+.L_panic_exit:
+    addq    $16, %rsp
     movq    %rbp, %rsp
     popq    %rbp
     movl    $60, %eax
