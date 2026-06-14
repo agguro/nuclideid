@@ -7,7 +7,6 @@ ifndef LAUNCH_ROOT
     export LAUNCH_ROOT := $(abspath $(CURDIR))/
 endif
 
-<<<<<<< HEAD
 ifeq ($(NVDISASM),)
     $(error CRITICAL: 'nvdisasm' not found in $$PATH. Please install nvidia-cuda-toolkit!)
 endif
@@ -30,9 +29,6 @@ endif
 
 GLOBAL_BUILD := $(PROJECT_ROOT)build
 GLOBAL_BIN   := $(PROJECT_ROOT)bin
-=======
-SUBDIRS := kernels x86_64
->>>>>>> 41fdc72c88f8c05df01e5a55b84b24c38abc7efc
 
 all: debug
 
