@@ -2,7 +2,7 @@
 # Title       : CUDA Decay Data Generator Host (10-Digit High Fidelity Edition)
 # Architecture: x86_64 | Linux SysV ABI | AT&T Syntax
 # Description : Headerless GPU Execution with 16-byte datapunten (double2).
-#               64-bit quad mathematics to handle up to 10 decimals without overflow.
+#               Dynamische max_t parsing vanaf de commandline (argv[3]).
 # Author      : agguro
 # ============================================================================
 
@@ -19,14 +19,14 @@
     fmt_start_l:  .long . - fmt_start
     fmt_done:     .ascii "\033[1;32m[SUCCES]\033[0m High-fidelity data veilig weggeschreven.\n"
     fmt_done_l:   .long . - fmt_done
-    fmt_error:    .ascii "\033[1;31m[ERROR]\033[0m Ongeldige argumenten. Gebruik: create_decay_data k npoints [-o file.bin] [-csv]\n"
+    fmt_error:    .ascii "\033[1;31m[ERROR]\033[0m Ongeldige argumenten.\nGebruik: create_decay_data k npoints max_t [-o file.bin] [-csv]\n"
     fmt_error_l:  .long . - fmt_error
     fmt_fail:     .ascii "\033[1;31m[CUDA LAUNCH FAILED]\033[0m Error-code: 0x"
     fmt_fail_l:   .long . - fmt_fail
     fmt_dot:      .ascii "."
     
-    csv_prec:     .quad 10              # Gewenste aantal decimalen achter de komma
-    csv_mult:     .quad 10000000000     # Multiplier 10^10 voor 64-bit integer conversie
+    csv_prec:     .quad 10              
+    csv_mult:     .quad 10000000000     
 
     csv_header:   .ascii "t,y\n"
     csv_header_l: .long . - csv_header
@@ -55,7 +55,7 @@
     .align 8
     k_val:         .double 0.0      
     npoints:       .long 0          
-    max_t:         .double 10.0     
+    max_t:         .double 0.0       # Nu standaard 0.0, wordt overschreven via CLI
 
     # De argumenten-array die de DIRECTE ADRESSEN bevat
     .align 8
@@ -76,15 +76,15 @@
 _start:
     # --- 1. Argument Parsing ---
     movq    (%rsp), %r15                    # %r15 = argc
-    cmpq    $3, %r15                        
+    cmpq    $4, %r15                        # Nu minimaal 4 argumenten vereist (prog, k, npoints, max_t)
     jl      .L_usage
 
-    # Parse K as double (64-bit)
+    # Parse K as double (64-bit) -> argv[1]
     movq    16(%rsp), %rax                  
     call    parse_float_double
     movsd   %xmm0, k_val(%rip)
 
-    # Parse npoints
+    # Parse npoints -> argv[2]
     movq    24(%rsp), %rax                  
     call    parse_int
     movl    %eax, npoints(%rip)
@@ -95,8 +95,13 @@ _start:
     shll    $4, %eax            
     movq    %rax, buffer_size(%rip)
 
-    # Loop door optionele vlaggen vanaf argv[3]
-    movq    $3, %r12
+    # Parse max_t as double (64-bit) -> argv[3]
+    movq    32(%rsp), %rax
+    call    parse_float_double
+    movsd   %xmm0, max_t(%rip)
+
+    # Loop door optionele vlaggen vanaf argv[4]
+    movq    $4, %r12
 .L_arg_parse_loop:
     cmpq    %r15, %r12
     jge     .L_arg_parse_done
@@ -302,7 +307,7 @@ _start:
     cmpl    npoints(%rip), %r12d
     jge     .L_csv_done
 
-    movsd   (%r13), %xmm0                   # Haal t op als f64 double
+    movsd   (%r13), %xmm0                   
     call    write_double_text
     
     movl    $1, %eax
@@ -311,7 +316,7 @@ _start:
     movl    $1, %edx
     syscall
 
-    movsd   8(%r13), %xmm0                  # Haal y op op offset 8 als f64 double
+    movsd   8(%r13), %xmm0                  
     call    write_double_text
 
     movl    $1, %eax
@@ -320,7 +325,7 @@ _start:
     movl    $1, %edx
     syscall
 
-    addq    $16, %r13                       # Verschuif met 16 bytes per paar
+    addq    $16, %r13                       
     incl    %r12d
     jmp     .L_csv_loop
 
@@ -444,7 +449,7 @@ write_double_text:
     pushq   %rsi
     pushq   %rdx
     
-    cvttsd2si %xmm0, %rax           # Kap af voor het gehele getal (past in 32-bit int)
+    cvttsd2si %xmm0, %rax           
     pushq   %rax                
     call    write_int_to_csv    
     
@@ -456,16 +461,15 @@ write_double_text:
     popq    %rax                
     
     cvtsi2sd %rax, %xmm1
-    subsd   %xmm1, %xmm0            # %xmm0 = pure fractiedeel
+    subsd   %xmm1, %xmm0            
     
     movq    csv_mult(%rip), %rax
     cvtsi2sd %rax, %xmm1
     mulsd   %xmm1, %xmm0
     
-    # UPGRADE: cvtsd2siq (64-bit Quadword) voorkomt de 2147483648 overflow
-    cvtsd2siq %xmm0, %rax           # %rax bevat nu de fractie als grote 64-bit int
+    cvtsd2siq %xmm0, %rax           
     
-    movq    csv_prec(%rip), %rsi    # %rsi = gewenste breedte (10)
+    movq    csv_prec(%rip), %rsi    
     call    write_fract_to_csv
     
     popq    %rdx                
@@ -486,11 +490,11 @@ write_fract_to_csv:
     
     leaq    (ascii_buf + 63)(%rip), %rcx
     movq    $10, %r8
-    xorq    %r9, %r9                # %r9 houdt aantal karakters bij
+    xorq    %r9, %r9                
 
 .L_conv_fract_loop:
-    xorq    %rdx, %rdx              # FIXED: Staat nu BINNEN de loop! Cleart de rest-falanx elke stap.
-    divq    %r8                     # %rax / 10, rest in %rdx
+    xorq    %rdx, %rdx              
+    divq    %r8                     
     addb    $48, %dl                
     decq    %rcx
     movb    %dl, (%rcx)
@@ -508,9 +512,9 @@ write_fract_to_csv:
 
 .L_fract_print:
     leaq    (ascii_buf + 64)(%rip), %rdx
-    subq    %rcx, %rdx              # Bereken exacte lengte voor de syscall
+    subq    %rcx, %rdx              
     
-    movl    $1, %eax                # sys_write
+    movl    $1, %eax                
     movq    fd_csv(%rip), %rdi
     movq    %rcx, %rsi
     syscall                     
