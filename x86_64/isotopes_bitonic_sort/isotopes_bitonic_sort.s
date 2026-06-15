@@ -3,7 +3,6 @@
  * Architecture : x86_64 | Linux SysV ABI | AT&T Syntax
  * File         : isotopes_bitonic_sort.s
  * Description  : Standalone Autonomous GPU Bitonic Sorter.
- * Embedded 64-bit parameter alignment framework with raw diagnostic capability.
  * Usage        : ./isotopes_bitonic_sort [-o target_sorted.bin]
  * ============================================================================
  */
@@ -12,7 +11,7 @@
 
 .section .rodata
     default_bin:  .string "isotopes.bin"
-    kernel_name:  .string "bitonic_sort"
+    kernel_name:  .string "isotopes_bitonic_sort"
 
     msg_start:    .asciz "[GPU-DRIVER] Loading embedded CUBIN image for bitonic sorting...\n"
     msg_gpu:      .asciz "[GPU-DRIVER] GPU Grid scaling configured to exactly %lu records (GridX=%lu).\n"
@@ -23,13 +22,10 @@
     .align 8
     pad_k_inf:    .double 999999.0
 
-    # ==========================================================================
-    # EMBEDDED GPU SILICON IMAGE: INJECT CUBIN DIRECTLY INTO THE ELF SEGMENT
-    # ==========================================================================
     .align 8
-    gpu_kernel_start:
-        .incbin "bitonic_sort.cubin"        # Ingests raw binary directly at compile-time
-    gpu_kernel_end:
+gpu_kernel_start:
+    .incbin "isotopes_bitonic_sort.cubin"
+gpu_kernel_end:
 
 .section .data
     .align 8
@@ -39,17 +35,14 @@
     cu_function:  .quad 0
     d_db_ptr:     .quad 0
 
-    # ==========================================================================
-    # STRICT 8-BYTE ALIGNED PARAMETER BLOCK FOR KERNEL INTERACTION
-    # ==========================================================================
     .align 8
     param_db:     .quad 0
     .align 8
-    param_j:      .quad 0                   # 64-bit aligned parameter bounds
+    param_j:      .quad 0
     .align 8
-    param_k:      .quad 0                   # 64-bit aligned parameter bounds
+    param_k:      .quad 0
     .align 8
-    param_N:      .quad 0                   # 64-bit aligned parameter bounds
+    param_N:      .quad 0
 
     .align 8
     kernel_args:
@@ -57,6 +50,9 @@
         .quad param_j
         .quad param_k
         .quad param_N
+
+    .align 8
+    stat_buf:     .zero 144
 
 .section .bss
     .align 8
@@ -71,15 +67,13 @@
 
 .section .text
 _start:
-    # Set up safe frame pointer and align stack to 16 bytes (ABI compliant)
     pushq   %rbp
     movq    %rsp, %rbp
     andq    $-16, %rsp
-    subq    $128, %rsp                      # Scratch space for fstat struct allocation
 
-    # --- ABI Stack Parser for -o Override Flag ---
-    movq    8(%rbp), %r8                    # %r8 = argc
-    leaq    24(%rbp), %rcx                  # %rcx = argv[1]
+    # --- parse -o ---
+    movq    8(%rbp), %r8
+    leaq    24(%rbp), %rcx
     leaq    default_bin(%rip), %rax
     movq    %rax, bin_target(%rip)
 
@@ -89,11 +83,11 @@ _start:
     jz      .L_sort_files_ready
 
     movb    (%rdi), %al
-    cmpb    $45, %al                        # Check for '-' character
+    cmpb    $'-', %al
     jne     .L_next_s
 
     movb    1(%rdi), %al
-    cmpb    $111, %al                       # Check for 'o' character
+    cmpb    $'o', %al
     jne     .L_next_s
 
     addq    $8, %rcx
@@ -105,7 +99,7 @@ _start:
     jmp     .L_sort_arg
 
 .L_sort_files_ready:
-    # Open target file (O_RDWR = 2)
+    # open
     movq    $2, %rax
     movq    bin_target(%rip), %rdi
     movq    $2, %rsi
@@ -113,79 +107,81 @@ _start:
     js      error_exit
     movq    %rax, fd_bin(%rip)
 
-    # Fetch file size metrics via native sys_fstat (syscall 5)
-    movq    $5, %rax                        # sys_fstat
+    # fstat into stat_buf
+    movq    $5, %rax
     movq    fd_bin(%rip), %rdi
-    leaq    0(%rsp), %rsi                   # Pass aligned stack pointer for stat struct
+    leaq    stat_buf(%rip), %rsi
     syscall
     js      error_exit
-    movq    48(%rsp), %rax                  # st_size resides at offset 48
+    movq    48(%rsi), %rax
     movq    %rax, size_in(%rip)
 
-    # Compute genuine record row count = size_in / 24 bytes
+    # records_real = size_in / 64
     xorq    %rdx, %rdx
-    movq    $24, %rcx
+    movq    $64, %rcx
     divq    %rcx
     movq    %rax, records_real(%rip)
 
-    # --- BIT-SMEARING ALGORITHM FOR NEXT POWER-OF-2 MATRIX BOUNDARY ---
-    decl    %eax
+    # --- Hacker's Delight: Next Power of 2 (Pure 64-bit Arithmetic) ---
+    decq    %rax                  # %rax = records_real - 1
+    
+    movq    %rax, %rcx
+    shrq    $1, %rcx
+    orq     %rcx, %rax
+    
+    movq    %rax, %rcx
+    shrq    $2, %rcx
+    orq     %rcx, %rax
+    
+    movq    %rax, %rcx
+    shrq    $4, %rcx
+    orq     %rcx, %rax
+    
+    movq    %rax, %rcx
+    shrq    $8, %rcx
+    orq     %rcx, %rax
+    
+    movq    %rax, %rcx
+    shrq    $16, %rcx
+    orq     %rcx, %rax
+    
+    movq    %rax, %rcx
+    shrq    $32, %rcx
+    orq     %rcx, %rax
+    
+    incq    %rax                  # %rax holds exact power of 2 (e.g., 4096)
 
-    movl    %eax, %ecx
-    shrl    $1, %ecx
-    orl     %ecx, %eax
-
-    movl    %eax, %ecx
-    shrl    $2, %ecx
-    orl     %ecx, %eax
-
-    movl    %eax, %ecx
-    shrl    $4, %ecx
-    orl     %ecx, %eax
-
-    movl    %eax, %ecx
-    shrl    $8, %ecx
-    orl     %ecx, %eax
-
-    movl    %eax, %ecx
-    shrl    $16, %ecx
-    orl     %ecx, %eax
-
-    incl    %eax
-
-    # Store determined power-of-2 dimensions
-    movl    %eax, %eax                      # Explicitly zero-extend %eax into %rax
     movq    %rax, records_pow2(%rip)
-    movq    %rax, param_N(%rip)             # Saved as 64-bit parameter base
+    movq    %rax, param_N(%rip)
 
-    # Compute padded byte sizing = records_pow2 * 24 bytes
-    imulq   $24, %rax, %rcx
+    # size_pow2 = N * 64
+    imulq   $64, %rax, %rcx
     movq    %rcx, size_pow2(%rip)
 
-    # Compute active dynamic grid scaling: GridX = records_pow2 / 256
+    # grid_x = N / 256
     shrq    $8, %rax
     movq    %rax, grid_x(%rip)
 
-    # Extend file bounds via ftruncate
+    # ftruncate
     movq    $77, %rax
     movq    fd_bin(%rip), %rdi
     movq    size_pow2(%rip), %rsi
     syscall
     js      error_exit
 
-    # Map the extended binary matrix into shared workspace memory
-    movq    $9, %rax                        # sys_mmap
+    # mmap
+    movq    $9, %rax
     xorq    %rdi, %rdi
     movq    size_pow2(%rip), %rsi
-    movq    $3, %rdx                        # PROT_READ | PROT_WRITE
-    movq    $1, %r10                        # MAP_SHARED
+    movq    $3, %rdx
+    movq    $1, %r10
     movq    fd_bin(%rip), %r8
     xorq    %r9, %r9
     syscall
     js      error_exit
     movq    %rax, ptr_out(%rip)
 
-    # --- Matrix Opvullen (Pad Missing Gaps to Power-of-2 Grid Bounds) ---
+    # pad to power-of-2
     movq    records_real(%rip), %r12
     movq    ptr_out(%rip), %rdi
 
@@ -193,18 +189,19 @@ _start:
     cmpq    records_pow2(%rip), %r12
     jae     .L_sort_gpu_init
 
-    # Compute target structural index pointer: %rdi + %r12 * 24
-    imulq   $24, %r12, %rcx
+    imulq   $64, %r12, %rcx
     addq    %rdi, %rcx
 
-    # Zero out data headers
     movq    $0, 0(%rcx)
     movq    $0, 8(%rcx)
-
-    # Inject maximum double floating boundary constraint to push padding to the tail end
+    movq    $0, 16(%rcx)
+    movq    $0, 24(%rcx)
+    movq    $0, 32(%rcx)
+    movq    $0, 40(%rcx)
     movq    pad_k_inf(%rip), %rax
-    movq    %rax, 16(%rcx)
-
+    movq    %rax, 48(%rcx)
+    movq    $0, 56(%rcx)
+    
     incq    %r12
     jmp     .L_pad_l
 
@@ -215,11 +212,10 @@ _start:
     xorq    %rax, %rax
     call    printf@PLT
 
-    # --- CUDA API Execution Bootstrap with Strict Verification ---
     xorq    %rdi, %rdi
     call    cuInit@PLT
     testl   %eax, %eax
-    jnz     cuda_error_exit                 # Guard against missing GPU hardware lane entirely
+    jnz     cuda_error_exit
 
     leaq    cu_device(%rip), %rdi
     xorq    %rsi, %rsi
@@ -234,144 +230,128 @@ _start:
     testl   %eax, %eax
     jnz     cuda_error_exit
 
-    # ==========================================================================
-    # ZERO-DEPENDENCY DESERIALIZATION: LOAD MODULE STRAIGHT FROM EXPERT .RODATA
-    # ==========================================================================
-    leaq    cu_module(%rip), %rdi           # Target module destination descriptor
-    leaq    gpu_kernel_start(%rip), %rsi    # Pass direct pointer to embedded CUBIN blob
-    call    cuModuleLoadData@PLT            # Synchronize raw image data directly into VRAM
+    leaq    cu_module(%rip), %rdi
+    leaq    gpu_kernel_start(%rip), %rsi
+    call    cuModuleLoadData@PLT
     testl   %eax, %eax
-    jnz     cuda_error_exit                 # Guard against corrupted internal binary image states
+    jnz     cuda_error_exit
 
-    # Extract function handle using the string symbol anchor
     leaq    cu_function(%rip), %rdi
     movq    cu_module(%rip), %rsi
     leaq    kernel_name(%rip), %rdx
     call    cuModuleGetFunction@PLT
     testl   %eax, %eax
-    jnz     cuda_error_exit                 # Guard against symbol mismatch within compiled binary
+    jnz     cuda_error_exit
 
-    # Allocate safe arena inside Device VRAM matching size_pow2
     leaq    d_db_ptr(%rip), %rdi
     movq    size_pow2(%rip), %rsi
     call    cuMemAlloc@PLT
     testl   %eax, %eax
     jnz     cuda_error_exit
 
-    # Synchronize layout states onto VRAM device memory pipeline
-    movq    d_db_ptr(%rip), %rdi            # Dedicated RIP-relative base anchor
+    movq    d_db_ptr(%rip), %rdi
     movq    ptr_out(%rip), %rsi
     movq    size_pow2(%rip), %rdx
     call    cuMemcpyHtoD@PLT
     testl   %eax, %eax
     jnz     cuda_error_exit
 
-    # Configure driver loop boundary variables
-    movq    d_db_ptr(%rip), %rax            # Corrected pointer assignment anchor
+    movq    d_db_ptr(%rip), %rax
     movq    %rax, param_db(%rip)
-    movq    $2, param_k(%rip)               # Initialize as 64-bit quad
+    movq    $2, param_k(%rip)
 
 .L_k_loop:
     movq    param_k(%rip), %rax
-    shrq    $1, %rax                        # 64-bit shift right operation
+    shrq    $1, %rax
     movq    %rax, param_j(%rip)
-
 .L_j_loop:
-    # Trigger parallel execution blocks on hardware threads
     movq    cu_function(%rip), %rdi
     movq    grid_x(%rip), %rsi
-    movq    $1, %rdx
-    movq    $1, %rcx
-    movq    $256, %r8                       # BlockX = 256 threads per CTA block
-    movq    $1, %r9
+    movq    $1, %rdx              # gridDimY
+    movq    $1, %rcx              # gridDimZ
+    movq    $256, %r8             # blockDimX
+    movq    $1, %r9               # blockDimY
 
-    # Structure references dynamically while enforcing safe 16-byte stack boundaries
+    # Space for exactly 5 remaining stack arguments (ABI Compliant & Aligned)
     subq    $48, %rsp
-    movq    $0, 32(%rsp)
-    movq    $0, 24(%rsp)
+
+    movq    $1, 0(%rsp)           # Arg 7:  unsigned int blockDimZ = 1
+    movq    $0, 8(%rsp)           # Arg 8:  unsigned int sharedMemBytes = 0
+    movq    $0, 16(%rsp)          # Arg 9:  CUstream hStream = NULL
     leaq    kernel_args(%rip), %rax
-    movq    %rax, 16(%rsp)                  # Pass perfectly aligned argument matrix address
-    movq    $0, 8(%rsp)
-    movq    $1, 0(%rsp)
+    movq    %rax, 24(%rsp)        # Arg 10: void** kernelParams = &kernel_args[0]
+    movq    $0, 32(%rsp)          # Arg 11: void** extra = NULL
+
     call    cuLaunchKernel@PLT
-    testl   %eax, %eax                      # Intercept core kernel parameter failure states
+    addq    $48, %rsp             # Instantly clean stack frame
+
+    testl   %eax, %eax
     jnz     cuda_error_exit
-    addq    $48, %rsp                       # Instantly wipe context frame allocation
 
     call    cuCtxSynchronize@PLT
     testl   %eax, %eax
     jnz     cuda_error_exit
 
-    shrq    $1, param_j(%rip)               # 64-bit parameter processing
+    shrq    $1, param_j(%rip)
     jnz     .L_j_loop
 
-    shlq    $1, param_k(%rip)               # 64-bit parameter processing
+    shlq    $1, param_k(%rip)
     movq    param_N(%rip), %rax
     cmpq    %rax, param_k(%rip)
     jle     .L_k_loop
 
-    # Download sorted matrix values directly back into shared mmap layout
     movq    ptr_out(%rip), %rdi
     movq    d_db_ptr(%rip), %rsi
     movq    size_pow2(%rip), %rdx
     call    cuMemcpyDtoH@PLT
 
-    # Release memory mappings and close active file descriptors
-    movq    $11, %rax                       # sys_munmap
+    movq    $11, %rax
     movq    ptr_out(%rip), %rdi
     movq    size_pow2(%rip), %rsi
     syscall
 
-    movq    $3, %rax                        # sys_close
+    movq    $3, %rax
     movq    fd_bin(%rip), %rdi
     syscall
 
-    # Print clean final completion log
     leaq    msg_done(%rip), %rdi
     xorq    %rax, %rax
     call    printf@PLT
 
-    # Deallocate GPU handlers cleanly
     movq    d_db_ptr(%rip), %rdi
     call    cuMemFree@PLT
     movq    cu_context(%rip), %rdi
     call    cuCtxDestroy@PLT
 
-    # Return stack structure to absolute entry pointer coordinates
     movq    %rbp, %rsp
     popq    %rbp
-    movq    $60, %rax                       # sys_exit Exit(0)
+    movq    $231, %rax            # sys_exit_group
     xorq    %rdi, %rdi
     syscall
 
 cuda_error_exit:
-    # --- DIAGNOSTIC MODE: Return the raw CUresult inside the exit code ---
-    movl    %eax, %edi                      # Move the raw CUDA error code (CUresult) into %edi
-
-    pushq   %rdi                            # Safeguard our error code over system write
-    movq    $1, %rax                        # sys_write
-    movq    $2, %rdi                        # stderr
-    leaq    fmt_err(%rip), %rsi
-    movq    $fmt_err_l, %rdx
-    syscall
-    popq    %rdi                            # Restore our exact CUDA error code
-
-    movq    %rbp, %rsp
-    popq    %rbp
-    movq    $60, %rax                       # sys_exit Exit(CUresult)
-    syscall
-
-error_exit:
-    # Handle local I/O or Host-side file descriptor failures
-    movq    $1, %rax                        # sys_write stderr
+    movl    %eax, %edi
+    pushq   %rdi
+    movq    $1, %rax
     movq    $2, %rdi
     leaq    fmt_err(%rip), %rsi
     movq    $fmt_err_l, %rdx
     syscall
-
+    popq    %rdi
     movq    %rbp, %rsp
     popq    %rbp
-    movq    $60, %rax                       # sys_exit Exit(1)
+    movq    $231, %rax            # sys_exit_group
+    syscall
+
+error_exit:
+    movq    $1, %rax
+    movq    $2, %rdi
+    leaq    fmt_err(%rip), %rsi
+    movq    $fmt_err_l, %rdx
+    syscall
+    movq    %rbp, %rsp
+    popq    %rbp
+    movq    $231, %rax            # sys_exit_group
     movq    $1, %rdi
     syscall
 
