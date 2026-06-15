@@ -4,7 +4,7 @@
 # ==============================================================================
 
 ifndef LAUNCH_ROOT
-    export LAUNCH_ROOT := $(abspath $(CURDIR)/../../)/
+	export LAUNCH_ROOT := $(abspath $(CURDIR)/../../)/
 endif
 
 ALL_DIRS := $(patsubst %/,%,$(dir $(wildcard */Makefile)))
@@ -15,7 +15,7 @@ all: debug
 debug release clean test install:
 	@for dir in $(SUBDIRS); do \
 		if [ -d $$dir ] && [ -f $$dir/Makefile ]; then \
-			$(MAKE) -C $$dir LAUNCH_ROOT=$(LAUNCH_ROOT) $@ || exit 1; \
+			$(MAKE) -C $$dir LAUNCH_ROOT=$(LAUNCH_ROOT) --no-print-directory $@ || exit 1; \
 		fi \
 	done
 
