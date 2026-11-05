@@ -92,11 +92,11 @@ needs the catalog. If matching remains on the CPU, no GPU catalog transfer is
 necessary. SQLite is always the source of isotope reference data.
 
 The CLI frees its buffer before exiting; it cannot hand a pointer to a separate
-process. The inference executable must link this module and call the loader
-in its own process. **The existing `learn_decay` has not yet been migrated**;
-it still uses the obsolete binary database and an incompatible record layout.
-Its numerical solver and GPU execution require their own review and testing.
-The `create_decay_data` measurement format is a separate, unchanged prototype.
+process. The inference executable now links this module and calls the loader
+in its own process. It fits CSV measurements on the GPU and performs candidate
+matching against this host-memory catalog. See the
+[inference documentation](../learn_decay/README.md) for the model, tests and
+limits. No isotope catalog transfer to the GPU is required for CPU matching.
 
 Tests compare every real candidate with SQLite when `isotopes.sqlite3` exists,
 and independently cover filtering, tie ordering, large decay constants, memory

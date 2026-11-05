@@ -1,0 +1,122 @@
+{
+  "archive_sha256": "b8752cd29dd48e6401bd0f53c753f18810d105c37d5c3fd7b7fc468eb90533e7",
+  "binary_sha256": "407596372fd0e247b961e93acfc7f42c0c1d5806750181206bf90ed6997e0d3c",
+  "conclusion": "Both real detector series pass the basic fitter and include Ag-111 among default-tolerance candidates. This is not reproduction of the researchers' instrument-corrected precision.",
+  "database_sha256": "7af2dab65353512fde9055769cb7f0329213ad7b4b28d74484ad32dc76e0d713",
+  "database_unchanged": true,
+  "dataset_doi": "10.5281/zenodo.18310004",
+  "detectors": {
+    "OR20": {
+      "independent_python_fit": {
+        "half_life_days": 7.4334184840090325,
+        "half_life_seconds": 642247.3570183804,
+        "k": 1.0792526788710602e-06,
+        "log_amplitude": 6.9391982069893885,
+        "log_rmse": 0.0012147148377788695,
+        "r_squared": 0.9999969711135995
+      },
+      "runs": {
+        "cpu": {
+          "candidate_lines": [
+            "candidate=Ag-111 z=47 n=64 k=1.0768505787968328e-06 relative_error=0.0022257068444250286"
+          ],
+          "difference_in_workbook_standard_uncertainties": 8.795705627425505,
+          "fit": {
+            "half_life_seconds": 642247.3570183804,
+            "k": 1.0792526788710602e-06,
+            "log_amplitude": 6.939198206989388,
+            "log_rmse": 0.0012147148377788797,
+            "r_squared": 0.9999969711135995
+          },
+          "half_life_days": 7.4334184840090325,
+          "half_life_difference_from_workbook_days": 0.009815113465030834,
+          "output_file": "cpu-or20.txt",
+          "relative_k_error_to_sqlite": 0.0022257068444250286,
+          "returncode": 0
+        },
+        "gpu": {
+          "candidate_lines": [
+            "candidate=Ag-111 z=47 n=64 k=1.0768505787968328e-06 relative_error=0.0022257068444250286"
+          ],
+          "difference_in_workbook_standard_uncertainties": 8.795705627425505,
+          "fit": {
+            "half_life_seconds": 642247.3570183804,
+            "k": 1.0792526788710602e-06,
+            "log_amplitude": 6.9391982069893885,
+            "log_rmse": 0.0012147148377788775,
+            "r_squared": 0.9999969711135995
+          },
+          "half_life_days": 7.4334184840090325,
+          "half_life_difference_from_workbook_days": 0.009815113465030834,
+          "output_file": "gpu-or20.txt",
+          "relative_k_error_to_sqlite": 0.0022257068444250286,
+          "returncode": 0
+        }
+      },
+      "samples": 792,
+      "span_days": 31.43109282528935
+    },
+    "OR50": {
+      "independent_python_fit": {
+        "half_life_days": 7.426450111485696,
+        "half_life_seconds": 641645.2896323642,
+        "k": 1.0802653611890295e-06,
+        "log_amplitude": 5.876644200463042,
+        "log_rmse": 0.0014369888062958963,
+        "r_squared": 0.9999964658684862
+      },
+      "runs": {
+        "cpu": {
+          "candidate_lines": [
+            "candidate=Ag-111 z=47 n=64 k=1.0768505787968328e-06 relative_error=0.0031610588609806982"
+          ],
+          "difference_in_workbook_standard_uncertainties": 2.5510754827105218,
+          "fit": {
+            "half_life_seconds": 641645.289632364,
+            "k": 1.0802653611890299e-06,
+            "log_amplitude": 5.876644200463043,
+            "log_rmse": 0.001436988806295893,
+            "r_squared": 0.9999964658684862
+          },
+          "half_life_days": 7.426450111485694,
+          "half_life_difference_from_workbook_days": 0.0028467409416919054,
+          "output_file": "cpu-or50.txt",
+          "relative_k_error_to_sqlite": 0.003161058860980698,
+          "returncode": 0
+        },
+        "gpu": {
+          "candidate_lines": [
+            "candidate=Ag-111 z=47 n=64 k=1.0768505787968328e-06 relative_error=0.0031610588609801119"
+          ],
+          "difference_in_workbook_standard_uncertainties": 2.5510754827145012,
+          "fit": {
+            "half_life_seconds": 641645.2896323643,
+            "k": 1.0802653611890293e-06,
+            "log_amplitude": 5.876644200463042,
+            "log_rmse": 0.001436988806295895,
+            "r_squared": 0.9999964658684862
+          },
+          "half_life_days": 7.426450111485698,
+          "half_life_difference_from_workbook_days": 0.0028467409416963463,
+          "output_file": "gpu-or50.txt",
+          "relative_k_error_to_sqlite": 0.003161058860980112,
+          "returncode": 0
+        }
+      },
+      "samples": 290,
+      "span_days": 34.60920347002315
+    }
+  },
+  "method": "t=acquisition midpoint relative to first midpoint; y=net photopeak area/live seconds",
+  "model_dependent_corrections_applied": false,
+  "sqlite_reference": {
+    "half_life_days": 7.45,
+    "half_life_seconds": 643680.0,
+    "k": 1.0768505787968328e-06,
+    "nuclide": "Ag-111"
+  },
+  "workbook_reference": {
+    "half_life_days": 7.423603370544002,
+    "standard_uncertainty_days": 0.0011158983577652663
+  }
+}

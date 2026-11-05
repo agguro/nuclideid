@@ -1,8 +1,8 @@
 # nuclideid — isotope data ingestion and decay inference prototype
 
 The host tools use GNU x86-64 assembly (AT&T syntax). Isotope reference data is
-now stored in SQLite and selected into memory; the older decay-generation and
-inference components use NVIDIA PTX and are still being reviewed.
+stored in SQLite and selected into memory. NVIDIA PTX kernels generate
+synthetic measurements and fit a positive single-exponential decay model.
 
 ## Current data pipeline
 
@@ -14,24 +14,30 @@ IAEA HTTPS API
     -> isotopes.sqlite3
     -> isotope_catalog_load (SQL selection and ordering)
     -> sorted records in host memory
+    -> learn_decay candidate matching
+
+Measurement t,y CSV -> log/time normalization -> GPU fit -> fitted decay constant
 ```
 
-The active ingestion/catalog path does not generate an isotope `.bin` file.
-SQLite is the authoritative isotope database. A GPU consumer can copy the
-memory buffer directly to device memory when needed.
+No active stage reads or generates isotope or measurement `.bin` files.
+SQLite supplies the isotope catalog; measurement input is `t,y` CSV.
+GPU fitting transfers only the normalized measurement buffer. Candidate
+matching uses the SQLite catalog in host memory.
 
 | Component | Current behavior |
 |---|---|
 | `fetch_isotopes` | Verified HTTPS via libcurl; validates the response and replaces the CSV after success |
 | `create_isotopes_db` | Validates the IAEA CSV and imports into SQLite in one transaction |
 | `isotopes_bitonic_sort` | Historical name for the new read-only SQLite catalog inspector and reusable memory loader |
-| `create_decay_data` | Older GPU prototype that generates synthetic measurements; not yet reviewed |
-| `learn_decay` | Older inference prototype; still requires migration from its obsolete isotope binary layout and numerical review |
+| `create_decay_data` | Checked GPU exponential generator; CSV output and independent CPU reference |
+| `learn_decay` | Fits all positive CSV samples, loads SQLite candidates, and reports matches within an explicit tolerance |
 
-**The complete identification pipeline is not yet validated.** The current
-`learn_decay` cannot consume the new catalog until it links the loader and
-uses its record layout and dynamic count. Running the catalog inspector alone
-does not pass memory to a different executable.
+The ingestion, catalog, and single-exponential inference path has been tested,
+including actual GTX 1060 GPU execution. Output is a set of **candidates**:
+decay rate alone does not prove a unique isotope identity. Mixtures,
+background, and Poisson count fitting are outside the current model. See the
+[inference documentation](x86_64/learn_decay/README.md) for quality gates and
+remaining limits.
 
 ## Build the reviewed stages
 
@@ -49,13 +55,16 @@ make -C x86_64/isotopes_bitonic_sort release
 ./release/bin/x86_64/isotopes_bitonic_sort/isotopes_bitonic_sort
 ```
 
-These stages run without CUDA. The root recursive build also includes the
-older GPU measurement generator, which still requires the CUDA toolchain.
-The bitonic-sort kernel has been retired from the build.
+The first three stages run without CUDA. The root recursive build now also
+builds generation and inference; these require GCC for linking, CUDA ptxas, the driver library,
+and a supported NVIDIA GPU for hardware execution. Their explicit `--cpu`
+reference mode does not initialize the GPU. The bitonic-sort kernel is retired.
 
 ```sh
 make -C x86_64/create_isotopes_db MODE=release test
 make -C x86_64/isotopes_bitonic_sort MODE=release test
+make -C x86_64/learn_decay MODE=release test
+NUCLIDEID_TEST_GPU=1 make -C x86_64/learn_decay MODE=release test
 ```
 
 See the [SQLite importer documentation](x86_64/create_isotopes_db/README.md),
@@ -63,5 +72,30 @@ See the [SQLite importer documentation](x86_64/create_isotopes_db/README.md),
 [CSV audit](docs/isotope-csv-audit.md). Original files are retained as backups;
 `README.md.before-sqlite-catalog.bak` preserves the documentation preceding
 this catalog migration.
+
+A synthetic Co-60 example, using the current SQLite snapshot:
+
+```sh
+make release
+./release/bin/x86_64/create_decay_data/create_decay_data 4.166945489506152e-9 257 720000000 -o decay_data.csv
+./release/bin/x86_64/learn_decay/learn_decay decay_data.csv isotopes.sqlite3 --tolerance 1e-8
+```
+
+## Real measurement validation
+
+The original [Silver-111 research dataset and preparation/results](datasets/ag111/README.md)
+are retained under `datasets/ag111/`. Both real detector series return Ag-111
+as their sole default-tolerance candidate on CPU and GPU. These basic fits do
+not reproduce the workbook's instrument-corrected precision. The source audit
+also records 39 workbook/report peak-area discrepancies without altering them.
+
+```sh
+python3 datasets/ag111/prepare.py
+python3 datasets/ag111/validate.py --gpu
+python3 tests/test_ag111_dataset.py
+```
+
+Original generation/inference files and preceding documentation are backed up
+as `.before-decay.bak` files.
 
 License: Apache-2.0; see [LICENSE](LICENSE).

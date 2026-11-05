@@ -1,0 +1,471 @@
+{
+  "cached_cells": [
+    {
+      "cell": "C33",
+      "sheet": "Uncertainty",
+      "value": 7.423603370544002
+    },
+    {
+      "cell": "D33",
+      "sheet": "Uncertainty",
+      "value": 0.0011158983577652663
+    },
+    {
+      "cell": "M15",
+      "sheet": "Elab (OR20 & OR50)",
+      "value": 7.424318719838946
+    },
+    {
+      "cell": "N15",
+      "sheet": "Elab (OR20 & OR50)",
+      "value": 0.0004191137806793418
+    },
+    {
+      "cell": "K11",
+      "sheet": "Elab (OR20)",
+      "value": 7.425204536253537
+    },
+    {
+      "cell": "L11",
+      "sheet": "Elab (OR20)",
+      "value": 0.000595872241867909
+    },
+    {
+      "cell": "K11",
+      "sheet": "Elab (OR50)",
+      "value": 7.423419435267866
+    },
+    {
+      "cell": "L11",
+      "sheet": "Elab (OR50)",
+      "value": 0.0005762346619073649
+    },
+    {
+      "cell": "B5",
+      "sheet": "111Ag 342.1 keV OR20",
+      "value": 0.0269263765614551
+    },
+    {
+      "cell": "B5",
+      "sheet": "111Ag 342.1 keV OR50",
+      "value": 0.0347687758800071
+    }
+  ],
+  "combined_statistical_fit_half_life_days": 7.424318719838946,
+  "combined_statistical_uncertainty_days": 0.0004191137806793418,
+  "exact_numeric_record_matches": {
+    "OR20": 792,
+    "OR50": 251
+  },
+  "final_half_life_days": 7.423603370544002,
+  "final_standard_uncertainty_days": 0.0011158983577652663,
+  "measurements_cross_checked": {
+    "OR20": 792,
+    "OR50": 290
+  },
+  "note": "Cached workbook results include instrument corrections and a different regression; they are comparison references, not independent fitter inputs.",
+  "reader": "xlrd 2.0.2",
+  "workbook_archive_member": "111Ag_half_life/Spreadsheet_for_data_elaboration/Elab_111Ag_data_half life.xls",
+  "workbook_filename_discrepancies": [
+    {
+      "match": "unique exact peak area, live time, true time; start timestamp checked below",
+      "report_name": "OR20_hf_111Ag_d120_s1_Td15_0000",
+      "row": 736,
+      "sheet": "111Ag 342.1 keV OR20",
+      "workbook_name": "OR20_hf_111Ag_d120_s1_Td15_00.Spc"
+    }
+  ],
+  "workbook_report_value_discrepancies": [
+    {
+      "difference": -1675.0,
+      "field": "peak_area_counts",
+      "measurement": "OR50_hf_111Ag_d10_s3_Td15_000.Spc",
+      "relative_difference": -0.0014289358224400081,
+      "report_value": 1172201.0,
+      "row": 193,
+      "sheet": "111Ag 342.1 keV OR50",
+      "workbook_value": 1170526.0
+    },
+    {
+      "difference": -503.0,
+      "field": "peak_area_counts",
+      "measurement": "OR50_hf_111Ag_d10_s3_Td15_001.Spc",
+      "relative_difference": -0.0004307384552674261,
+      "report_value": 1167762.0,
+      "row": 194,
+      "sheet": "111Ag 342.1 keV OR50",
+      "workbook_value": 1167259.0
+    },
+    {
+      "difference": -1921.0,
+      "field": "peak_area_counts",
+      "measurement": "OR50_hf_111Ag_d10_s3_Td15_002.Spc",
+      "relative_difference": -0.0016473616915085836,
+      "report_value": 1166107.0,
+      "row": 195,
+      "sheet": "111Ag 342.1 keV OR50",
+      "workbook_value": 1164186.0
+    },
+    {
+      "difference": -1388.0,
+      "field": "peak_area_counts",
+      "measurement": "OR50_hf_111Ag_d10_s3_Td15_003.Spc",
+      "relative_difference": -0.001188158816087054,
+      "report_value": 1168194.0,
+      "row": 196,
+      "sheet": "111Ag 342.1 keV OR50",
+      "workbook_value": 1166806.0
+    },
+    {
+      "difference": -311.0,
+      "field": "peak_area_counts",
+      "measurement": "OR50_hf_111Ag_d10_s3_Td15_004.Spc",
+      "relative_difference": -0.00026492458167897445,
+      "report_value": 1173919.0,
+      "row": 197,
+      "sheet": "111Ag 342.1 keV OR50",
+      "workbook_value": 1173608.0
+    },
+    {
+      "difference": -325.0,
+      "field": "peak_area_counts",
+      "measurement": "OR50_hf_111Ag_d10_s3_Td15_005.Spc",
+      "relative_difference": -0.00027609900145610366,
+      "report_value": 1177114.0,
+      "row": 198,
+      "sheet": "111Ag 342.1 keV OR50",
+      "workbook_value": 1176789.0
+    },
+    {
+      "difference": -619.0,
+      "field": "peak_area_counts",
+      "measurement": "OR50_hf_111Ag_d10_s3_Td15_006.Spc",
+      "relative_difference": -0.0005272096386527281,
+      "report_value": 1174106.0,
+      "row": 199,
+      "sheet": "111Ag 342.1 keV OR50",
+      "workbook_value": 1173487.0
+    },
+    {
+      "difference": -534.0,
+      "field": "peak_area_counts",
+      "measurement": "OR50_hf_111Ag_d10_s3_Td15_007.Spc",
+      "relative_difference": -0.0004521113345327548,
+      "report_value": 1181125.0,
+      "row": 200,
+      "sheet": "111Ag 342.1 keV OR50",
+      "workbook_value": 1180591.0
+    },
+    {
+      "difference": -461.0,
+      "field": "peak_area_counts",
+      "measurement": "OR50_hf_111Ag_d10_s3_Td15_008.Spc",
+      "relative_difference": -0.0003909828001492689,
+      "report_value": 1179080.0,
+      "row": 201,
+      "sheet": "111Ag 342.1 keV OR50",
+      "workbook_value": 1178619.0
+    },
+    {
+      "difference": 131.0,
+      "field": "peak_area_counts",
+      "measurement": "OR50_hf_111Ag_d10_s3_Td15_009.Spc",
+      "relative_difference": 0.00011076266435784289,
+      "report_value": 1182709.0,
+      "row": 202,
+      "sheet": "111Ag 342.1 keV OR50",
+      "workbook_value": 1182840.0
+    },
+    {
+      "difference": -1255.0,
+      "field": "peak_area_counts",
+      "measurement": "OR50_hf_111Ag_d10_s3_Td15_010.Spc",
+      "relative_difference": -0.0010581591235238469,
+      "report_value": 1186022.0,
+      "row": 203,
+      "sheet": "111Ag 342.1 keV OR50",
+      "workbook_value": 1184767.0
+    },
+    {
+      "difference": -264.0,
+      "field": "peak_area_counts",
+      "measurement": "OR50_hf_111Ag_d10_s3_Td15_011.Spc",
+      "relative_difference": -0.00022282166501801142,
+      "report_value": 1184804.0,
+      "row": 204,
+      "sheet": "111Ag 342.1 keV OR50",
+      "workbook_value": 1184540.0
+    },
+    {
+      "difference": -198.0,
+      "field": "peak_area_counts",
+      "measurement": "OR50_hf_111Ag_d10_s3_Td15_012.Spc",
+      "relative_difference": -0.00016688552832755415,
+      "report_value": 1186442.0,
+      "row": 205,
+      "sheet": "111Ag 342.1 keV OR50",
+      "workbook_value": 1186244.0
+    },
+    {
+      "difference": -457.0,
+      "field": "peak_area_counts",
+      "measurement": "OR50_hf_111Ag_d10_s3_Td15_013.Spc",
+      "relative_difference": -0.0003844904786023056,
+      "report_value": 1188586.0,
+      "row": 206,
+      "sheet": "111Ag 342.1 keV OR50",
+      "workbook_value": 1188129.0
+    },
+    {
+      "difference": -535.0,
+      "field": "peak_area_counts",
+      "measurement": "OR50_hf_111Ag_d10_s3_Td15_014.Spc",
+      "relative_difference": -0.00045101055870513604,
+      "report_value": 1186225.0,
+      "row": 207,
+      "sheet": "111Ag 342.1 keV OR50",
+      "workbook_value": 1185690.0
+    },
+    {
+      "difference": -945.0,
+      "field": "peak_area_counts",
+      "measurement": "OR50_hf_111Ag_d10_s3_Td15_015.Spc",
+      "relative_difference": -0.000793602139114676,
+      "report_value": 1190773.0,
+      "row": 208,
+      "sheet": "111Ag 342.1 keV OR50",
+      "workbook_value": 1189828.0
+    },
+    {
+      "difference": -381.0,
+      "field": "peak_area_counts",
+      "measurement": "OR50_hf_111Ag_d10_s3_Td15_016.Spc",
+      "relative_difference": -0.000318892497237939,
+      "report_value": 1194760.0,
+      "row": 209,
+      "sheet": "111Ag 342.1 keV OR50",
+      "workbook_value": 1194379.0
+    },
+    {
+      "difference": -970.0,
+      "field": "peak_area_counts",
+      "measurement": "OR50_hf_111Ag_d10_s3_Td15_017.Spc",
+      "relative_difference": -0.0008101264131277227,
+      "report_value": 1197344.0,
+      "row": 210,
+      "sheet": "111Ag 342.1 keV OR50",
+      "workbook_value": 1196374.0
+    },
+    {
+      "difference": -320.0,
+      "field": "peak_area_counts",
+      "measurement": "OR50_hf_111Ag_d10_s3_Td15_018.Spc",
+      "relative_difference": -0.0003477584252629108,
+      "report_value": 920179.0,
+      "row": 211,
+      "sheet": "111Ag 342.1 keV OR50",
+      "workbook_value": 919859.0
+    },
+    {
+      "difference": -1265.0,
+      "field": "peak_area_counts",
+      "measurement": "OR50_hf_111Ag_d10_s4_Td10_000.Spc",
+      "relative_difference": -0.0011063891568614931,
+      "report_value": 1143359.0,
+      "row": 212,
+      "sheet": "111Ag 342.1 keV OR50",
+      "workbook_value": 1142094.0
+    },
+    {
+      "difference": -754.0,
+      "field": "peak_area_counts",
+      "measurement": "OR50_hf_111Ag_d10_s4_Td10_001.Spc",
+      "relative_difference": -0.0006570336585969455,
+      "report_value": 1147582.0,
+      "row": 213,
+      "sheet": "111Ag 342.1 keV OR50",
+      "workbook_value": 1146828.0
+    },
+    {
+      "difference": -11.0,
+      "field": "peak_area_counts",
+      "measurement": "OR50_hf_111Ag_d10_s4_Td10_002.Spc",
+      "relative_difference": -9.577059633738414e-06,
+      "report_value": 1148578.0,
+      "row": 214,
+      "sheet": "111Ag 342.1 keV OR50",
+      "workbook_value": 1148567.0
+    },
+    {
+      "difference": 110.0,
+      "field": "peak_area_counts",
+      "measurement": "OR50_hf_111Ag_d10_s4_Td10_003.Spc",
+      "relative_difference": 9.579895457213574e-05,
+      "report_value": 1148238.0,
+      "row": 215,
+      "sheet": "111Ag 342.1 keV OR50",
+      "workbook_value": 1148348.0
+    },
+    {
+      "difference": -527.0,
+      "field": "peak_area_counts",
+      "measurement": "OR50_hf_111Ag_d10_s4_Td10_004.Spc",
+      "relative_difference": -0.00045782852019744834,
+      "report_value": 1151086.0,
+      "row": 216,
+      "sheet": "111Ag 342.1 keV OR50",
+      "workbook_value": 1150559.0
+    },
+    {
+      "difference": -1254.0,
+      "field": "peak_area_counts",
+      "measurement": "OR50_hf_111Ag_d10_s4_Td10_005.Spc",
+      "relative_difference": -0.0010903513470273578,
+      "report_value": 1150088.0,
+      "row": 217,
+      "sheet": "111Ag 342.1 keV OR50",
+      "workbook_value": 1148834.0
+    },
+    {
+      "difference": -1625.0,
+      "field": "peak_area_counts",
+      "measurement": "OR50_hf_111Ag_d10_s4_Td10_006.Spc",
+      "relative_difference": -0.0014096126037583308,
+      "report_value": 1152799.0,
+      "row": 218,
+      "sheet": "111Ag 342.1 keV OR50",
+      "workbook_value": 1151174.0
+    },
+    {
+      "difference": -1782.0,
+      "field": "peak_area_counts",
+      "measurement": "OR50_hf_111Ag_d10_s4_Td10_007.Spc",
+      "relative_difference": -0.0015423710622799395,
+      "report_value": 1155364.0,
+      "row": 219,
+      "sheet": "111Ag 342.1 keV OR50",
+      "workbook_value": 1153582.0
+    },
+    {
+      "difference": -45.0,
+      "field": "peak_area_counts",
+      "measurement": "OR50_hf_111Ag_d10_s4_Td10_008.Spc",
+      "relative_difference": -3.889698522433188e-05,
+      "report_value": 1156902.0,
+      "row": 220,
+      "sheet": "111Ag 342.1 keV OR50",
+      "workbook_value": 1156857.0
+    },
+    {
+      "difference": -1740.0,
+      "field": "peak_area_counts",
+      "measurement": "OR50_hf_111Ag_d10_s4_Td10_009.Spc",
+      "relative_difference": -0.0015022650530843488,
+      "report_value": 1158251.0,
+      "row": 221,
+      "sheet": "111Ag 342.1 keV OR50",
+      "workbook_value": 1156511.0
+    },
+    {
+      "difference": -89.0,
+      "field": "peak_area_counts",
+      "measurement": "OR50_hf_111Ag_d10_s4_Td10_010.Spc",
+      "relative_difference": -7.66618171607047e-05,
+      "report_value": 1160943.0,
+      "row": 222,
+      "sheet": "111Ag 342.1 keV OR50",
+      "workbook_value": 1160854.0
+    },
+    {
+      "difference": -952.0,
+      "field": "peak_area_counts",
+      "measurement": "OR50_hf_111Ag_d10_s4_Td10_011.Spc",
+      "relative_difference": -0.0008186479753511286,
+      "report_value": 1162893.0,
+      "row": 223,
+      "sheet": "111Ag 342.1 keV OR50",
+      "workbook_value": 1161941.0
+    },
+    {
+      "difference": -773.0,
+      "field": "peak_area_counts",
+      "measurement": "OR50_hf_111Ag_d10_s4_Td10_012.Spc",
+      "relative_difference": -0.0006656728936792076,
+      "report_value": 1161231.0,
+      "row": 224,
+      "sheet": "111Ag 342.1 keV OR50",
+      "workbook_value": 1160458.0
+    },
+    {
+      "difference": -914.0,
+      "field": "peak_area_counts",
+      "measurement": "OR50_hf_111Ag_d10_s4_Td10_013.Spc",
+      "relative_difference": -0.0007822174752861213,
+      "report_value": 1168473.0,
+      "row": 225,
+      "sheet": "111Ag 342.1 keV OR50",
+      "workbook_value": 1167559.0
+    },
+    {
+      "difference": 113.0,
+      "field": "peak_area_counts",
+      "measurement": "OR50_hf_111Ag_d10_s4_Td10_014.Spc",
+      "relative_difference": 9.681106079220576e-05,
+      "report_value": 1167222.0,
+      "row": 226,
+      "sheet": "111Ag 342.1 keV OR50",
+      "workbook_value": 1167335.0
+    },
+    {
+      "difference": -1595.0,
+      "field": "peak_area_counts",
+      "measurement": "OR50_hf_111Ag_d10_s4_Td10_015.Spc",
+      "relative_difference": -0.0013631756265907278,
+      "report_value": 1170062.0,
+      "row": 227,
+      "sheet": "111Ag 342.1 keV OR50",
+      "workbook_value": 1168467.0
+    },
+    {
+      "difference": -812.0,
+      "field": "peak_area_counts",
+      "measurement": "OR50_hf_111Ag_d10_s4_Td10_016.Spc",
+      "relative_difference": -0.0006949074070112049,
+      "report_value": 1168501.0,
+      "row": 228,
+      "sheet": "111Ag 342.1 keV OR50",
+      "workbook_value": 1167689.0
+    },
+    {
+      "difference": -883.0,
+      "field": "peak_area_counts",
+      "measurement": "OR50_hf_111Ag_d10_s4_Td10_017.Spc",
+      "relative_difference": -0.0007533827568348368,
+      "report_value": 1172047.0,
+      "row": 229,
+      "sheet": "111Ag 342.1 keV OR50",
+      "workbook_value": 1171164.0
+    },
+    {
+      "difference": 23.0,
+      "field": "peak_area_counts",
+      "measurement": "OR50_hf_111Ag_d10_s4_Td10_018.Spc",
+      "relative_difference": 1.955787302178492e-05,
+      "report_value": 1175997.0,
+      "row": 230,
+      "sheet": "111Ag 342.1 keV OR50",
+      "workbook_value": 1176020.0
+    },
+    {
+      "difference": -766.0,
+      "field": "peak_area_counts",
+      "measurement": "OR50_hf_111Ag_d10_s4_Td10_019.Spc",
+      "relative_difference": -0.0006498800776123101,
+      "report_value": 1178679.0,
+      "row": 231,
+      "sheet": "111Ag 342.1 keV OR50",
+      "workbook_value": 1177913.0
+    }
+  ],
+  "workbook_sha256": "c97b30e8a1ee1d6e2476e30792746a64e00cb9ea54f2b6e34fb13ddc5ba72bfc"
+}

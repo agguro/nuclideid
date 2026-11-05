@@ -1,0 +1,59 @@
+{
+  "archive": "111Ag_half_life.zip",
+  "archive_md5": "760fa6811cc571f2b568089a0139b17a",
+  "archive_sha256": "b8752cd29dd48e6401bd0f53c753f18810d105c37d5c3fd7b7fc468eb90533e7",
+  "detectors": {
+    "OR20": {
+      "dead_time_fraction_range": [
+        0.009655923800873545,
+        0.15358687957009354
+      ],
+      "first_start": "2025-07-03T16:34:46",
+      "independent_python_fit": {
+        "half_life_days": 7.4334184840090325,
+        "half_life_seconds": 642247.3570183804,
+        "k": 1.0792526788710602e-06,
+        "log_amplitude": 6.9391982069893885,
+        "log_rmse": 0.0012147148377788695,
+        "r_squared": 0.9999969711135995
+      },
+      "input_sha256": "f121fb527ecd7eeadc63bca17efce562c9fe95324e69d4dd1d22dab943aefec8",
+      "last_start": "2025-08-04T00:29:19",
+      "real_time_range_s": [
+        1176.35998535156,
+        18751.240234375
+      ],
+      "rows": 792,
+      "span_seconds": 2715646.420105
+    },
+    "OR50": {
+      "dead_time_fraction_range": [
+        0.0035320626667808552,
+        0.14860105182230465
+      ],
+      "first_start": "2025-08-18T10:05:42",
+      "independent_python_fit": {
+        "half_life_days": 7.426450111485696,
+        "half_life_seconds": 641645.2896323642,
+        "k": 1.0802653611890295e-06,
+        "log_amplitude": 5.876644200463042,
+        "log_rmse": 0.0014369888062958963,
+        "r_squared": 0.9999964658684862
+      },
+      "input_sha256": "b4292e0f92cb7f52a8ff2ee7811237402565f17d9e9604ef427a465bbbe22129",
+      "last_start": "2025-09-21T14:48:51",
+      "real_time_range_s": [
+        3026.82006835938,
+        74319.1796875
+      ],
+      "rows": 290,
+      "span_seconds": 2990235.17981
+    }
+  },
+  "excluded_reports": 0,
+  "input_reports": 1082,
+  "method": "t=acquisition midpoint relative to first midpoint; y=net photopeak area/live seconds",
+  "model_dependent_corrections_applied": false,
+  "selection_window_keV": 1.0,
+  "target_peak_keV": 342.1
+}

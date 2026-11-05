@@ -83,12 +83,12 @@ sqlite3 isotopes.sqlite3 "PRAGMA integrity_check;"
 ## GPU migration
 
 Sorting has been replaced by a SQLite memory loader. The inference program
-still expects the old packed binary file and needs its own migration. This SQLite file cannot be passed directly
-to those programs or mapped as an array of records.
+now calls that loader directly; no binary isotope database is generated.
+SQLite files are queried through SQLite, not mapped as packed GPU records.
 
 The catalog loader now selects suitable rows and builds a packed host-memory
 buffer; see [its API documentation](../isotopes_bitonic_sort/README.md).
-The inference executable still needs to link and call that loader.
+The inference executable links and calls that loader in its own process.
 For an initial set of unqualified measured candidates:
 
 ```sql

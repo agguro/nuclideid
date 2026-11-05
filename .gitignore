@@ -32,3 +32,7 @@ data/
 *.xz
 *.bz2
 *.bzip2
+# Retained real measurement dataset and reproducible derived inputs.
+!/datasets/ag111/111Ag_half_life.zip
+!/datasets/ag111/derived/*.csv
+__pycache__/

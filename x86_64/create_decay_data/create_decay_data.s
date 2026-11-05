@@ -1,566 +1,320 @@
-# ============================================================================
-# Title       : CUDA Decay Data Generator Host (10-Digit High Fidelity Edition)
-# Architecture: x86_64 | Linux SysV ABI | AT&T Syntax
-# Description : Headerless GPU Execution with 16-byte datapunten (double2).
-#               Dynamische max_t parsing vanaf de commandline (argv[3]).
-# Author      : agguro
-# ============================================================================
-
+/* Synthetic measurements y=exp(-k*t), CSV only, atomic publication.
+ * Default GPU; --cpu uses libm exp as an independent reference backend.
+ */
+.include "decay.inc"
+.global main
 .section .rodata
-    .align 16
-    func_name:    .string "create_decay_data"
-    def_bin:      .string "decay_data.bin"
-    def_csv:      .string "decay_data.csv"
-    
-    flag_o:       .string "-o"
-    flag_csv:     .string "-csv"
-    
-    fmt_start:    .ascii "\033[1;34m[generator]\033[0m Generating f64 data on GPU...\n"
-    fmt_start_l:  .long . - fmt_start
-    fmt_done:     .ascii "\033[1;32m[SUCCES]\033[0m High-fidelity data veilig weggeschreven.\n"
-    fmt_done_l:   .long . - fmt_done
-    fmt_error:    .ascii "\033[1;31m[ERROR]\033[0m Ongeldige argumenten.\nGebruik: create_decay_data k npoints max_t [-o file.bin] [-csv]\n"
-    fmt_error_l:  .long . - fmt_error
-    fmt_fail:     .ascii "\033[1;31m[CUDA LAUNCH FAILED]\033[0m Error-code: 0x"
-    fmt_fail_l:   .long . - fmt_fail
-    fmt_dot:      .ascii "."
-    
-    csv_prec:     .quad 10              
-    csv_mult:     .quad 10000000000     
-
-    csv_header:   .ascii "t,y\n"
-    csv_header_l: .long . - csv_header
-    fmt_comma:    .ascii ","
-    fmt_nl:       .ascii "\n"
-
-    .align 8
-    cubin_start:
-        .incbin "create_decay_data.cubin"
-    cubin_end:
-
+usage: .asciz "Usage: create_decay_data K NPOINTS MAX_T [-o FILE.csv] [--cpu]\nRequires K>0, 3<=NPOINTS<=1000000, MAX_T>0, 0<K*MAX_T<=700.\nWrites t,y CSV with 17-digit precision; no .bin output."
+default_csv: .asciz "decay_data.csv"
+flag_output: .asciz "-o"
+flag_cpu: .asciz "--cpu"
+flag_help: .asciz "--help"
+header: .asciz "t,y\n"
+row_format: .asciz "%.17g,%.17g\n"
+write_mode: .asciz "w"
+tmp_suffix: .asciz ".tmp.XXXXXX"
+kernel_name: .asciz "create_decay_data"
+msg_args: .asciz "invalid arguments; use --help"
+msg_gpu: .asciz "GPU generation failed (CUDA error %d)\n"
+msg_memory: .asciz "cannot allocate measurement buffer"
+msg_values: .asciz "generated measurements are invalid or not representable"
+msg_file: .asciz "cannot create, write, close, or replace output CSV"
+error_format: .asciz "create_decay_data: %s\n"
+done_format: .asciz "Generated %lu measurements in %s (%s).\n"
+backend_gpu: .asciz "GPU"
+backend_cpu: .asciz "CPU reference"
+max_product: .double 700.0
+one: .double 1.0
+.align 8
+image: .incbin "create_decay_data.cubin"
 .section .data
-    .align 16
-    cu_ctx:        .quad 0
-    cu_device:     .long 0
-    cu_module:     .quad 0
-    cu_function:   .quad 0
-    d_out_ptr:     .quad 0          
-
-    # Output bestandsnamen pointers
-    bin_path:      .quad def_bin
-    csv_path:      .quad 0
-    write_csv:     .byte 0
-
-    # Geparsed parameters uit CLI (64-bit doubles)
-    .align 8
-    k_val:         .double 0.0      
-    npoints:       .long 0          
-    max_t:         .double 0.0       # Nu standaard 0.0, wordt overschreven via CLI
-
-    # De argumenten-array die de DIRECTE ADRESSEN bevat
-    .align 8
-    kernel_args:   .quad d_out_ptr, k_val, npoints, max_t
-
-    # Buffers voor bestandsafhandeling
-    fd_bin:        .quad 0
-    fd_csv:        .quad 0
-    host_buffer:   .quad 0    
-    buffer_size:   .quad 0    
-
-    .align 16
-    ascii_buf:     .zero 64
-    hex_buf:       .ascii "00\n"
-
+.align 8
+kernel_params:
+ output_device: .quad 0
+ rate: .double 0
+ samples: .long 0
+ .align 8
+ max_time: .double 0
+kernel_args: .quad output_device,rate,samples,max_time
+job:
+ .quad image,kernel_name,kernel_args,0,0,0,0,0,output_device,1
+.section .bss
+.align 8
+buffer: .zero 8
+buffer_bytes: .zero 8
+count_value: .zero 8
+count_double: .zero 8
+out_name: .zero 8
+temporary: .zero 8
+temp_created: .zero 8
+stream: .zero 8
+cpu_mode: .zero 8
+status: .zero 8
+current_time: .zero 8
 .section .text
-.globl _start
-_start:
-    # --- 1. Argument Parsing ---
-    movq    (%rsp), %r15                    # %r15 = argc
-    cmpq    $4, %r15                        # Nu minimaal 4 argumenten vereist (prog, k, npoints, max_t)
-    jl      .L_usage
-
-    # Parse K as double (64-bit) -> argv[1]
-    movq    16(%rsp), %rax                  
-    call    parse_float_double
-    movsd   %xmm0, k_val(%rip)
-
-    # Parse npoints -> argv[2]
-    movq    24(%rsp), %rax                  
-    call    parse_int
-    movl    %eax, npoints(%rip)
-    testl   %eax, %eax
-    jle     .L_usage
-
-    # Bereken totale buffer grootte (npoints * 16 bytes per double2 paar)
-    shll    $4, %eax            
-    movq    %rax, buffer_size(%rip)
-
-    # Parse max_t as double (64-bit) -> argv[3]
-    movq    32(%rsp), %rax
-    call    parse_float_double
-    movsd   %xmm0, max_t(%rip)
-
-    # Loop door optionele vlaggen vanaf argv[4]
-    movq    $4, %r12
-.L_arg_parse_loop:
-    cmpq    %r15, %r12
-    jge     .L_arg_parse_done
-    
-    movq    8(%rsp, %r12, 8), %rdi          
-    leaq    flag_o(%rip), %rsi
-    call    strcmp_local
-    testl   %eax, %eax
-    jnz     .L_check_csv_flag
-
-    incq    %r12
-    cmpq    %r15, %r12
-    jge     .L_usage
-    movq    8(%rsp, %r12, 8), %rax
-    movq    %rax, bin_path(%rip)
-    jmp     .L_next_arg
-
-.L_check_csv_flag:
-    movq    8(%rsp, %r12, 8), %rdi
-    leaq    flag_csv(%rip), %rsi
-    call    strcmp_local
-    testl   %eax, %eax
-    jnz     .L_next_arg
-
-    movb    $1, write_csv(%rip)
-    leaq    def_csv(%rip), %rax
-    movq    %rax, csv_path(%rip)
-
-.L_next_arg:
-    incq    %r12
-    jmp     .L_arg_parse_loop
-
-.L_usage:
-    movl    $1, %eax                        
-    movl    $2, %edi                        
-    leaq    fmt_error(%rip), %rsi
-    movl    fmt_error_l(%rip), %edx
-    syscall
-    movl    $1, %edi
-    jmp     .L_exit
-
-.L_arg_parse_done:
-    # --- 2. Stack Frame Setup ---
-    pushq   %rbp
-    movq    %rsp, %rbp
-    andq    $-16, %rsp                      
-    subq    $256, %rsp                      
-
-    # --- 3. CUDA Setup via v2 Entrypoints ---
-    xorl    %edi, %edi
-    call    cuInit@PLT
-
-    leaq    128(%rsp), %rdi                 
-    xorl    %esi, %esi
-    call    cuDeviceGet@PLT
-
-    leaq    136(%rsp), %rdi                 
-    xorl    %esi, %esi
-    movl    128(%rsp), %edx                 
-    call    cuCtxCreate_v2@PLT
-
-    leaq    cu_module(%rip), %rdi
-    leaq    cubin_start(%rip), %rsi
-    call    cuModuleLoadData@PLT
-
-    leaq    cu_function(%rip), %rdi
-    movq    cu_module(%rip), %rsi
-    leaq    func_name(%rip), %rdx
-    call    cuModuleGetFunction@PLT
-
-    # --- 4. Memory Allocation ---
-    movl    $1, %eax
-    movl    $1, %edi
-    leaq    fmt_start(%rip), %rsi
-    movl    fmt_start_l(%rip), %edx
-    syscall
-
-    leaq    d_out_ptr(%rip), %rdi
-    movq    buffer_size(%rip), %rsi
-    call    cuMemAlloc_v2@PLT
-
-    movl    $9, %eax                        
-    xorq    %rdi, %rdi
-    movq    buffer_size(%rip), %rsi
-    movl    $3, %edx                        
-    movl    $34, %r10d                      
-    movq    $-1, %r8
-    xorq    %r9, %r9
-    syscall
-    movq    %rax, host_buffer(%rip)
-
-    # --- 5. GPU Launch ---
-    movq    cu_function(%rip), %rdi
-    movl    $32, %esi                       
-    movl    $1, %edx
-    movl    $1, %ecx
-    movl    $256, %r8d                      
-    movl    $1, %r9d
-    
-    subq    $48, %rsp                       
-    movq    $1, 0(%rsp)     
-    movq    $1, 8(%rsp)     
-    movq    $0, 16(%rsp)    
-    leaq    kernel_args(%rip), %rax         
-    movq    %rax, 24(%rsp)  
-    movq    $0, 32(%rsp)
-    movq    $0, 40(%rsp)
-    call    cuLaunchKernel@PLT
-    addq    $48, %rsp
-
-    # --- BARE-METAL RETURN-CODE CHECK ---
-    testl   %eax, %eax                      
-    jz      .L_launch_ok                    
-
-    movl    %eax, %r13d                     
-    movl    $1, %eax
-    movl    $2, %edi
-    leaq    fmt_fail(%rip), %rsi
-    movl    fmt_fail_l(%rip), %edx
-    syscall
-
-    leaq    hex_buf(%rip), %rdi
-    movl    %r13d, %edx
-    shrl    $4, %edx
-    andl    $15, %edx
-    cmpb    $10, %dl
-    jae     .L_hex_alpha1
-    addb    $48, %dl
-    jmp     .L_hex_store1
-.L_hex_alpha1:
-    addb    $55, %dl
-.L_hex_store1:
-    movb    %dl, (%rdi)
-
-    movl    %r13d, %edx
-    andl    $15, %edx
-    cmpb    $10, %dl
-    jae     .L_hex_alpha2
-    addb    $48, %dl
-    jmp     .L_hex_store2
-.L_hex_alpha2:
-    addb    $55, %dl
-.L_hex_store2:
-    movb    %dl, 1(%rdi)
-
-    movl    $1, %eax
-    movl    $2, %edi
-    leaq    hex_buf(%rip), %rsi
-    movl    $3, %edx
-    syscall
-    movl    $1, %edi                        
-    jmp     .L_exit
-
-.L_launch_ok:
-    call    cuCtxSynchronize@PLT
-
-    movq    host_buffer(%rip), %rdi
-    movq    d_out_ptr(%rip), %rsi
-    movq    buffer_size(%rip), %rdx
-    call    cuMemcpyDtoH_v2@PLT
-
-    # ==========================================
-    # FILE SERIALIZATION
-    # ==========================================
-    # 1. Schrijf BIN-bestand
-    movl    $2, %eax                        
-    movq    bin_path(%rip), %rdi
-    movl    $577, %esi                      
-    movl    $0644, %edx                     
-    syscall
-    movq    %rax, fd_bin(%rip)
-
-    movl    $1, %eax                        
-    movq    fd_bin(%rip), %rdi
-    movq    host_buffer(%rip), %rsi
-    movq    buffer_size(%rip), %rdx
-    syscall
-
-    movl    $3, %eax                        
-    movq    fd_bin(%rip), %rdi
-    syscall
-
-    # 2. Schrijf optioneel CSV-bestand
-    cmpb    $1, write_csv(%rip)
-    jne     .L_cleanup
-
-    movl    $2, %eax                        
-    movq    csv_path(%rip), %rdi
-    movl    $577, %esi          
-    movl    $0644, %edx         
-    syscall
-    movq    %rax, fd_csv(%rip)
-
-    movl    $1, %eax                        
-    movq    fd_csv(%rip), %rdi
-    leaq    csv_header(%rip), %rsi
-    movl    csv_header_l(%rip), %edx
-    syscall
-
-    xorl    %r12d, %r12d                    
-    movq    host_buffer(%rip), %r13 
-.L_csv_loop:
-    cmpl    npoints(%rip), %r12d
-    jge     .L_csv_done
-
-    movsd   (%r13), %xmm0                   
-    call    write_double_text
-    
-    movl    $1, %eax
-    movq    fd_csv(%rip), %rdi
-    leaq    fmt_comma(%rip), %rsi
-    movl    $1, %edx
-    syscall
-
-    movsd   8(%r13), %xmm0                  
-    call    write_double_text
-
-    movl    $1, %eax
-    movq    fd_csv(%rip), %rdi
-    leaq    fmt_nl(%rip), %rsi
-    movl    $1, %edx
-    syscall
-
-    addq    $16, %r13                       
-    incl    %r12d
-    jmp     .L_csv_loop
-
-.L_csv_done:
-    movl    $3, %eax                        
-    movq    fd_csv(%rip), %rdi
-    syscall
-
-.L_cleanup:
-    movl    $1, %eax
-    movl    $1, %edi
-    leaq    fmt_done(%rip), %rsi
-    movl    fmt_done_l(%rip), %edx
-    syscall
-
-    movq    %rbp, %rsp
-    popq    %rbp
-    xorl    %edi, %edi
-.L_exit:
-    movq    $231, %rax                      
-    syscall
-
-# -----------------------------------------------------------------------
-# Utilities
-# -----------------------------------------------------------------------
-strcmp_local:
-    xorl    %eax, %eax
-.L_sloop:
-    movb    (%rdi), %dl
-    movb    (%rsi), %cl
-    cmpb    %cl, %dl
-    jne     .L_sdiff
-    testb   %dl, %dl
-    jz      .L_sdone
-    incq    %rdi
-    incq    %rsi
-    jmp     .L_sloop
-.L_sdiff:
-    sbbl    %eax, %eax
-    orl     $1, %eax
-.L_sdone:
-    ret
-
-parse_int:
-    pushq   %rbp
-    movq    %rsp, %rbp
-    pushq   %rdx                
-    pushq   %rcx
-    movq    %rax, %rdx          
-    xorl    %eax, %eax          
-.L_int_loop:
-    movb    (%rdx), %cl         
-    testb   %cl, %cl            
-    jz      .L_int_done
-    subb    $48, %cl            
-    imull   $10, %eax, %eax     
-    movzbl  %cl, %ecx
-    addl    %ecx, %eax          
-    incq    %rdx                
-    jmp     .L_int_loop
-.L_int_done:
-    popq    %rcx                
-    popq    %rdx
-    movq    %rbp, %rsp
-    popq    %rbp
-    ret
-
-parse_float_double:
-    pushq   %rbp
-    movq    %rsp, %rbp
-    pushq   %rdx                
-    pushq   %rcx
-    pushq   %r8
-    movq    %rax, %rdx          
-    xorl    %ecx, %ecx
-    cvtsi2sd %ecx, %xmm0        
-    movq    $10, %r8
-    cvtsi2sd %r8, %xmm2         
-.L_fp_pre:
-    movb    (%rdx), %cl
-    testb   %cl, %cl
-    jz      .L_fp_done
-    cmpb    $46, %cl            
-    je      .L_fp_dot
-    subb    $48, %cl
-    mulsd   %xmm2, %xmm0        
-    movzbl  %cl, %ecx
-    cvtsi2sd %ecx, %xmm1
-    addsd   %xmm1, %xmm0        
-    incq    %rdx
-    jmp     .L_fp_pre
-.L_fp_dot:
-    incq    %rdx                
-    movq    $1, %r8
-    cvtsi2sd %r8, %xmm3         
-.L_fp_post:
-    movb    (%rdx), %cl
-    testb   %cl, %cl
-    jz      .L_fp_done
-    subb    $48, %cl
-    mulsd   %xmm2, %xmm3        
-    movzbl  %cl, %ecx
-    cvtsi2sd %ecx, %xmm1
-    divsd   %xmm3, %xmm1        
-    addsd   %xmm1, %xmm0        
-    incq    %rdx
-    jmp     .L_fp_post
-.L_fp_done:
-    popq    %r8                 
-    popq    %rcx
-    popq    %rdx
-    movq    %rbp, %rsp
-    popq    %rbp
-    ret
-
-write_double_text:
-    pushq   %rbp
-    movq    %rsp, %rbp
-    pushq   %rax                
-    pushq   %rdi
-    pushq   %rsi
-    pushq   %rdx
-    
-    cvttsd2si %xmm0, %rax           
-    pushq   %rax                
-    call    write_int_to_csv    
-    
-    movl    $1, %eax            
-    movq    fd_csv(%rip), %rdi
-    leaq    fmt_dot(%rip), %rsi 
-    movl    $1, %edx
-    syscall
-    popq    %rax                
-    
-    cvtsi2sd %rax, %xmm1
-    subsd   %xmm1, %xmm0            
-    
-    movq    csv_mult(%rip), %rax
-    cvtsi2sd %rax, %xmm1
-    mulsd   %xmm1, %xmm0
-    
-    cvtsd2siq %xmm0, %rax           
-    
-    movq    csv_prec(%rip), %rsi    
-    call    write_fract_to_csv
-    
-    popq    %rdx                
-    popq    %rsi
-    popq    %rdi
-    popq    %rax
-    movq    %rbp, %rsp
-    popq    %rbp
-    ret
-
-write_fract_to_csv:
-    pushq   %rbp
-    movq    %rsp, %rbp
-    pushq   %rax
-    pushq   %rcx
-    pushq   %rdx
-    pushq   %r8
-    
-    leaq    (ascii_buf + 63)(%rip), %rcx
-    movq    $10, %r8
-    xorq    %r9, %r9                
-
-.L_conv_fract_loop:
-    xorq    %rdx, %rdx              
-    divq    %r8                     
-    addb    $48, %dl                
-    decq    %rcx
-    movb    %dl, (%rcx)
-    incq    %r9
-    testq   %rax, %rax
-    jnz     .L_conv_fract_loop
-
-.L_pad_fract_loop:
-    cmpq    %rsi, %r9
-    jge     .L_fract_print
-    decq    %rcx
-    movb    $48, (%rcx)             
-    incq    %r9
-    jmp     .L_pad_fract_loop
-
-.L_fract_print:
-    leaq    (ascii_buf + 64)(%rip), %rdx
-    subq    %rcx, %rdx              
-    
-    movl    $1, %eax                
-    movq    fd_csv(%rip), %rdi
-    movq    %rcx, %rsi
-    syscall                     
-
-    popq    %r8
-    popq    %rdx
-    popq    %rcx
-    popq    %rax
-    movq    %rbp, %rsp
-    popq    %rbp
-    ret
-
-write_int_to_csv:
-    pushq   %rbp
-    movq    %rsp, %rbp
-    pushq   %rax                
-    pushq   %rcx
-    pushq   %rdx
-    pushq   %r8
-    pushq   %rdi
-    pushq   %rsi
-    leaq    (ascii_buf + 63)(%rip), %rcx
-    movq    $10, %r8
-.L_conv_csv:
-    xorl    %edx, %edx
-    divq    %r8
-    addb    $48, %dl
-    decq    %rcx
-    movb    %dl, (%rcx)
-    testq   %rax, %rax
-    jnz     .L_conv_csv
-    leaq    (ascii_buf + 64)(%rip), %rdx
-    subq    %rcx, %rdx
-    movl    $1, %eax            
-    movq    fd_csv(%rip), %rdi
-    movq    %rcx, %rsi
-    syscall                     
-    popq    %rsi                
-    popq    %rdi
-    popq    %r8
-    popq    %rdx
-    popq    %rcx
-    popq    %rax
-    movq    %rbp, %rsp
-    popq    %rbp
-    ret
-
-.size _start, . - _start
+main:
+ pushq %rbp
+ movq %rsp,%rbp
+ andq $-16,%rsp
+ leaq -8(%rsi),%r12
+ movl %edi,%r13d
+ cmpq $2,%r13
+ jne .Lrequired
+ movq 16(%r12),%rdi
+ leaq flag_help(%rip),%rsi
+ call strcmp@PLT
+ testl %eax,%eax
+ jne .Lbad_args
+ leaq usage(%rip),%rdi
+ call puts@PLT
+ jmp .Lcleanup
+.Lrequired:
+ cmpq $4,%r13
+ jb .Lbad_args
+ movq 16(%r12),%rdi
+ leaq rate(%rip),%rsi
+ call decay_parse_number
+ testl %eax,%eax
+ jne .Lbad_args
+ movq 24(%r12),%rdi
+ leaq count_double(%rip),%rsi
+ call decay_parse_number
+ testl %eax,%eax
+ jne .Lbad_args
+ movsd count_double(%rip),%xmm0
+ cvttsd2siq %xmm0,%rax
+ cmpq $3,%rax
+ jb .Lbad_args
+ cmpq $MAX_SAMPLES,%rax
+ ja .Lbad_args
+ cvtsi2sdq %rax,%xmm1
+ ucomisd %xmm1,%xmm0
+ jne .Lbad_args
+ movq %rax,count_value(%rip)
+ movl %eax,samples(%rip)
+ shlq $4,%rax
+ movq %rax,buffer_bytes(%rip)
+ movq 32(%r12),%rdi
+ leaq max_time(%rip),%rsi
+ call decay_parse_number
+ testl %eax,%eax
+ jne .Lbad_args
+ pxor %xmm1,%xmm1
+ movsd rate(%rip),%xmm0
+ ucomisd %xmm1,%xmm0
+ jbe .Lbad_args
+ movsd max_time(%rip),%xmm2
+ ucomisd %xmm1,%xmm2
+ jbe .Lbad_args
+ mulsd %xmm2,%xmm0
+ ucomisd %xmm1,%xmm0
+ jbe .Lbad_args
+ ucomisd max_product(%rip),%xmm0
+ ja .Lbad_args
+ leaq default_csv(%rip),%rax
+ movq %rax,out_name(%rip)
+ movq $4,%r14
+ xorl %r15d,%r15d
+.Lflags:
+ cmpq %r13,%r14
+ jae .Lallocate
+ movq 8(%r12,%r14,8),%rdi
+ leaq flag_cpu(%rip),%rsi
+ call strcmp@PLT
+ testl %eax,%eax
+ jne .Loutput_flag
+ cmpq $0,cpu_mode(%rip)
+ jne .Lbad_args
+ movq $1,cpu_mode(%rip)
+ jmp .Lnext_flag
+.Loutput_flag:
+ movq 8(%r12,%r14,8),%rdi
+ leaq flag_output(%rip),%rsi
+ call strcmp@PLT
+ testl %eax,%eax
+ jne .Lbad_args
+ testl %r15d,%r15d
+ jnz .Lbad_args
+ movl $1,%r15d
+ incq %r14
+ cmpq %r13,%r14
+ jae .Lbad_args
+ movq 8(%r12,%r14,8),%rax
+ cmpb $0,(%rax)
+ je .Lbad_args
+ movq %rax,out_name(%rip)
+.Lnext_flag:
+ incq %r14
+ jmp .Lflags
+.Lallocate:
+ movq buffer_bytes(%rip),%rdi
+ call malloc@PLT
+ testq %rax,%rax
+ je .Lmemory_error
+ movq %rax,buffer(%rip)
+ cmpq $0,cpu_mode(%rip)
+ jne .Lcpu
+ movq %rax,job+JOB_OUTPUT(%rip)
+ movq buffer_bytes(%rip),%rax
+ movq %rax,job+JOB_OUTPUT_BYTES(%rip)
+ movq count_value(%rip),%rax
+ addq $255,%rax
+ shrq $8,%rax
+ movq %rax,job+JOB_GRID(%rip)
+ leaq job(%rip),%rdi
+ call decay_gpu_run
+ testl %eax,%eax
+ jne .Lgpu_error
+ jmp .Lcheck_buffer
+.Lcpu:
+ xorl %ebx,%ebx
+ movq buffer(%rip),%r12
+.Lcpu_sample:
+ cvtsi2sdq %rbx,%xmm0
+ movq count_value(%rip),%rax
+ decq %rax
+ cvtsi2sdq %rax,%xmm1
+ divsd %xmm1,%xmm0
+ mulsd max_time(%rip),%xmm0
+ movsd %xmm0,current_time(%rip)
+ mulsd rate(%rip),%xmm0
+ pxor %xmm1,%xmm1
+ subsd %xmm0,%xmm1
+ movapd %xmm1,%xmm0
+ call exp@PLT
+ movsd current_time(%rip),%xmm1
+ movsd %xmm1,(%r12)
+ movsd %xmm0,8(%r12)
+ addq $16,%r12
+ incq %rbx
+ cmpq count_value(%rip),%rbx
+ jb .Lcpu_sample
+.Lcheck_buffer:
+ movq buffer(%rip),%r12
+ xorl %ebx,%ebx
+ pxor %xmm2,%xmm2
+.Lcheck_sample:
+ movsd (%r12),%xmm0
+ ucomisd %xmm2,%xmm0
+ jb .Lvalue_error
+ jp .Lvalue_error
+ testq %rbx,%rbx
+ jz .Lcheck_y
+ ucomisd -16(%r12),%xmm0
+ jbe .Lvalue_error
+.Lcheck_y:
+ movsd 8(%r12),%xmm0
+ ucomisd %xmm2,%xmm0
+ jbe .Lvalue_error
+ ucomisd one(%rip),%xmm0
+ ja .Lvalue_error
+ addq $16,%r12
+ incq %rbx
+ cmpq count_value(%rip),%rbx
+ jb .Lcheck_sample
+ /* Unique adjacent temporary file, preserving previous output on failure. */
+ movq out_name(%rip),%rdi
+ call strlen@PLT
+ leaq 12(%rax),%rdi
+ call malloc@PLT
+ testq %rax,%rax
+ je .Lmemory_error
+ movq %rax,temporary(%rip)
+ movq %rax,%rdi
+ movq out_name(%rip),%rsi
+ call strcpy@PLT
+ movq temporary(%rip),%rdi
+ leaq tmp_suffix(%rip),%rsi
+ call strcat@PLT
+ movq temporary(%rip),%rdi
+ call mkstemp@PLT
+ testl %eax,%eax
+ js .Lfile_error
+ movq $1,temp_created(%rip)
+ movl %eax,%ebx
+ movl %eax,%edi
+ leaq write_mode(%rip),%rsi
+ call fdopen@PLT
+ testq %rax,%rax
+ jz .Lfdopen_error
+ movq %rax,stream(%rip)
+ leaq header(%rip),%rdi
+ movq %rax,%rsi
+ call fputs@PLT
+ testl %eax,%eax
+ js .Lfile_error
+ movq buffer(%rip),%r12
+ movq count_value(%rip),%r13
+.Lwrite_sample:
+ movq stream(%rip),%rdi
+ leaq row_format(%rip),%rsi
+ movsd (%r12),%xmm0
+ movsd 8(%r12),%xmm1
+ movl $2,%eax
+ call fprintf@PLT
+ testl %eax,%eax
+ js .Lfile_error
+ addq $16,%r12
+ decq %r13
+ jnz .Lwrite_sample
+ movq stream(%rip),%rdi
+ call fclose@PLT
+ movq $0,stream(%rip)
+ testl %eax,%eax
+ jne .Lfile_error
+ movq temporary(%rip),%rdi
+ movq out_name(%rip),%rsi
+ call rename@PLT
+ testl %eax,%eax
+ jne .Lfile_error
+ movq $0,temp_created(%rip)
+ leaq done_format(%rip),%rdi
+ movq count_value(%rip),%rsi
+ movq out_name(%rip),%rdx
+ leaq backend_gpu(%rip),%rcx
+ cmpq $0,cpu_mode(%rip)
+ je .Lreport
+ leaq backend_cpu(%rip),%rcx
+.Lreport:
+ xorl %eax,%eax
+ call printf@PLT
+ jmp .Lcleanup
+.Lfdopen_error:
+ movl %ebx,%edi
+ call close@PLT
+ jmp .Lfile_error
+.Lgpu_error:
+ movl %eax,%edx
+ movq stderr(%rip),%rdi
+ leaq msg_gpu(%rip),%rsi
+ xorl %eax,%eax
+ call fprintf@PLT
+ jmp .Lfailed
+.Lbad_args: leaq msg_args(%rip),%rdx; jmp .Lerror
+.Lmemory_error: leaq msg_memory(%rip),%rdx; jmp .Lerror
+.Lvalue_error: leaq msg_values(%rip),%rdx; jmp .Lerror
+.Lfile_error: leaq msg_file(%rip),%rdx
+.Lerror:
+ movq stderr(%rip),%rdi
+ leaq error_format(%rip),%rsi
+ xorl %eax,%eax
+ call fprintf@PLT
+.Lfailed: movq $1,status(%rip)
+.Lcleanup:
+ movq stream(%rip),%rdi
+ testq %rdi,%rdi
+ jz .Lremove_temp
+ call fclose@PLT
+.Lremove_temp:
+ cmpq $0,temp_created(%rip)
+ je .Lfree
+ movq temporary(%rip),%rdi
+ call unlink@PLT
+.Lfree:
+ movq temporary(%rip),%rdi
+ call free@PLT
+ movq buffer(%rip),%rdi
+ call free@PLT
+ movl status(%rip),%edi
+ call exit@PLT
 .section .note.GNU-stack,"",@progbits

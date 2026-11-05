@@ -1,0 +1,3 @@
+k=1.0802653611890293e-06 half_life_seconds=641645.28963236429 log_amplitude=5.8766442004630424 log_rmse=0.001436988806295895 r_squared=0.99999646586848623 samples=290 backend=GPU
+1 candidate(s) within relative k tolerance 0.01; decay rate alone does not establish identity.
+candidate=Ag-111 z=47 n=64 k=1.0768505787968328e-06 relative_error=0.0031610588609801119
