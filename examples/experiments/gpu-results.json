@@ -1,0 +1,47 @@
+{
+  "backend": "GPU",
+  "cases": [
+    {
+      "case": "co60_clean.csv",
+      "returncode": 0,
+      "stdout": "k=4.1669454895061512e-09 half_life_seconds=166344192.00000003 log_amplitude=6.9077552789821377 log_rmse=2.6701530157384353e-16 r_squared=1 samples=51 backend=GPU\n1 candidate(s) within relative k tolerance 0.01; decay rate alone does not establish identity.\ncandidate=Co-60 z=27 n=33 k=4.166945489506152e-09 relative_error=1.985100632192483e-16\n",
+      "stderr": ""
+    },
+    {
+      "case": "f18_noisy.csv",
+      "returncode": 0,
+      "stdout": "k=0.00010501074297631403 half_life_seconds=6600.7263725035245 log_amplitude=6.9037957850996126 log_rmse=0.0098882353274465859 r_squared=0.99984922911284746 samples=121 backend=GPU\n3 candidate(s) within relative k tolerance 0.01; decay rate alone does not establish identity.\ncandidate=Tl-196 z=81 n=115 k=0.00010464178450482265 relative_error=0.0035135307210863061\ncandidate=F-18 z=9 n=9 k=0.00010524235227596267 relative_error=0.0022055771922390595\ncandidate=Ar-41 z=18 n=23 k=0.0001053959767296088 relative_error=0.0036685175475966859\n",
+      "stderr": ""
+    },
+    {
+      "case": "f18_background.csv",
+      "returncode": 2,
+      "stdout": "k=5.7971127837094586e-05 half_life_seconds=11956.76548691216 log_amplitude=6.9497901374967839 log_rmse=0.067550713427977471 r_squared=0.97742983054738553 samples=121 backend=GPU\n",
+      "stderr": "learn_decay: fit rejected: requires log_rmse<=0.05 and r_squared>=0.95\n"
+    },
+    {
+      "case": "f18_n13_mixture.csv",
+      "returncode": 2,
+      "stdout": "k=0.00011454602968619366 half_life_seconds=6051.2545258780883 log_amplitude=6.1588755264654225 log_rmse=0.12897143506414518 r_squared=0.97889544779139159 samples=121 backend=GPU\n",
+      "stderr": "learn_decay: fit rejected: requires log_rmse<=0.05 and r_squared>=0.95\n"
+    },
+    {
+      "case": "invalid_zero.csv",
+      "returncode": 1,
+      "stdout": "",
+      "stderr": "learn_decay: invalid samples: times must increase strictly from t>=0; y must be positive and finite\n"
+    },
+    {
+      "case": "real_ag111_or20",
+      "returncode": 0,
+      "stdout": "k=1.0792526788710602e-06 half_life_seconds=642247.35701838043 log_amplitude=6.9391982069893885 log_rmse=0.0012147148377788775 r_squared=0.99999697111359953 samples=792 backend=GPU\n1 candidate(s) within relative k tolerance 0.01; decay rate alone does not establish identity.\ncandidate=Ag-111 z=47 n=64 k=1.0768505787968328e-06 relative_error=0.0022257068444250286\n",
+      "stderr": ""
+    },
+    {
+      "case": "real_ag111_or50",
+      "returncode": 0,
+      "stdout": "k=1.0802653611890293e-06 half_life_seconds=641645.28963236429 log_amplitude=5.8766442004630424 log_rmse=0.001436988806295895 r_squared=0.99999646586848623 samples=290 backend=GPU\n1 candidate(s) within relative k tolerance 0.01; decay rate alone does not establish identity.\ncandidate=Ag-111 z=47 n=64 k=1.0768505787968328e-06 relative_error=0.0031610588609801119\n",
+      "stderr": ""
+    }
+  ]
+}

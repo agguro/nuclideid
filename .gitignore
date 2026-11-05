@@ -36,3 +36,6 @@ data/
 !/datasets/ag111/111Ag_half_life.zip
 !/datasets/ag111/derived/*.csv
 __pycache__/
+
+# Reproducible synthetic teaching measurements.
+!/examples/experiments/*.csv

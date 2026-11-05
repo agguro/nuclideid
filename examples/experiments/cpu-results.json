@@ -1,0 +1,47 @@
+{
+  "backend": "CPU reference",
+  "cases": [
+    {
+      "case": "co60_clean.csv",
+      "returncode": 0,
+      "stdout": "k=4.1669454895061495e-09 half_life_seconds=166344192.00000009 log_amplitude=6.9077552789821359 log_rmse=4.3278877980455942e-16 r_squared=1 samples=51 backend=CPU reference\n1 candidate(s) within relative k tolerance 0.01; decay rate alone does not establish identity.\ncandidate=Co-60 z=27 n=33 k=4.166945489506152e-09 relative_error=5.955301896577452e-16\n",
+      "stderr": ""
+    },
+    {
+      "case": "f18_noisy.csv",
+      "returncode": 0,
+      "stdout": "k=0.00010501074297631408 half_life_seconds=6600.7263725035209 log_amplitude=6.9037957850996134 log_rmse=0.0098882353274465963 r_squared=0.99984922911284746 samples=121 backend=CPU reference\n3 candidate(s) within relative k tolerance 0.01; decay rate alone does not establish identity.\ncandidate=Tl-196 z=81 n=115 k=0.00010464178450482265 relative_error=0.0035135307210868204\ncandidate=F-18 z=9 n=9 k=0.00010524235227596267 relative_error=0.0022055771922385422\ncandidate=Ar-41 z=18 n=23 k=0.0001053959767296088 relative_error=0.0036685175475961681\n",
+      "stderr": ""
+    },
+    {
+      "case": "f18_background.csv",
+      "returncode": 2,
+      "stdout": "k=5.797112783709462e-05 half_life_seconds=11956.765486912152 log_amplitude=6.9497901374967848 log_rmse=0.067550713427977485 r_squared=0.97742983054738553 samples=121 backend=CPU reference\n",
+      "stderr": "learn_decay: fit rejected: requires log_rmse<=0.05 and r_squared>=0.95\n"
+    },
+    {
+      "case": "f18_n13_mixture.csv",
+      "returncode": 2,
+      "stdout": "k=0.00011454602968619367 half_life_seconds=6051.2545258780883 log_amplitude=6.1588755264654216 log_rmse=0.12897143506414521 r_squared=0.97889544779139148 samples=121 backend=CPU reference\n",
+      "stderr": "learn_decay: fit rejected: requires log_rmse<=0.05 and r_squared>=0.95\n"
+    },
+    {
+      "case": "invalid_zero.csv",
+      "returncode": 1,
+      "stdout": "",
+      "stderr": "learn_decay: invalid samples: times must increase strictly from t>=0; y must be positive and finite\n"
+    },
+    {
+      "case": "real_ag111_or20",
+      "returncode": 0,
+      "stdout": "k=1.0792526788710602e-06 half_life_seconds=642247.35701838043 log_amplitude=6.9391982069893876 log_rmse=0.0012147148377788797 r_squared=0.99999697111359953 samples=792 backend=CPU reference\n1 candidate(s) within relative k tolerance 0.01; decay rate alone does not establish identity.\ncandidate=Ag-111 z=47 n=64 k=1.0768505787968328e-06 relative_error=0.0022257068444250286\n",
+      "stderr": ""
+    },
+    {
+      "case": "real_ag111_or50",
+      "returncode": 0,
+      "stdout": "k=1.0802653611890299e-06 half_life_seconds=641645.28963236394 log_amplitude=5.8766442004630433 log_rmse=0.0014369888062958931 r_squared=0.99999646586848623 samples=290 backend=CPU reference\n1 candidate(s) within relative k tolerance 0.01; decay rate alone does not establish identity.\ncandidate=Ag-111 z=47 n=64 k=1.0768505787968328e-06 relative_error=0.0031610588609806982\n",
+      "stderr": ""
+    }
+  ]
+}

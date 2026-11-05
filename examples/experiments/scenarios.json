@@ -1,0 +1,57 @@
+{
+  "cases": [
+    {
+      "description": "Perfect single exponential; synthetic timestamps span three Co-60 half-lives, not a short physical measurement.",
+      "expected_candidate": "Co-60",
+      "expected_exit": 0,
+      "file": "co60_clean.csv",
+      "samples": 51
+    },
+    {
+      "description": "Single exponential with seeded multiplicative noise; sigma(log y)=0.01.",
+      "expected_candidate": "F-18",
+      "expected_exit": 0,
+      "file": "f18_noisy.csv",
+      "samples": 121
+    },
+    {
+      "description": "F-18 decay plus a constant background of 200; outside the current fit model.",
+      "expected_candidate": null,
+      "expected_exit": 2,
+      "file": "f18_background.csv",
+      "samples": 121
+    },
+    {
+      "description": "Mixture of two decay rates, initial amplitudes 400 (F-18) and 600 (N-13); outside the current model.",
+      "expected_candidate": null,
+      "expected_exit": 2,
+      "file": "f18_n13_mixture.csv",
+      "samples": 121
+    },
+    {
+      "description": "Contains y=0; invalid for a log-space fit.",
+      "expected_candidate": null,
+      "expected_exit": 1,
+      "file": "invalid_zero.csv",
+      "samples": 4
+    }
+  ],
+  "data_kind": "synthetic teaching examples",
+  "intensity_unit": "arbitrary positive intensity",
+  "references_from_sqlite": {
+    "Co-60": {
+      "half_life_seconds": 166344192.0,
+      "k": 4.166945489506152e-09
+    },
+    "F-18": {
+      "half_life_seconds": 6586.2,
+      "k": 0.00010524235227596267
+    },
+    "N-13": {
+      "half_life_seconds": 597.9,
+      "k": 0.0011593028609465552
+    }
+  },
+  "seed": 31415,
+  "time_unit": "seconds"
+}

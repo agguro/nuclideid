@@ -1,5 +1,9 @@
 # nuclideid — isotope data ingestion and decay inference prototype
 
+Current prerelease: [v0.1.0-alpha](https://github.com/agguro/nuclideid/releases/tag/v0.1.0-alpha).
+Read the [release notes](docs/releases/v0.1.0-alpha.md) for strengths, weaknesses,
+supported inputs and validation limits.
+
 The host tools use GNU x86-64 assembly (AT&T syntax). Isotope reference data is
 stored in SQLite and selected into memory. NVIDIA PTX kernels generate
 synthetic measurements and fit a positive single-exponential decay model.
@@ -79,6 +83,18 @@ A synthetic Co-60 example, using the current SQLite snapshot:
 make release
 ./release/bin/x86_64/create_decay_data/create_decay_data 4.166945489506152e-9 257 720000000 -o decay_data.csv
 ./release/bin/x86_64/learn_decay/learn_decay decay_data.csv isotopes.sqlite3 --tolerance 1e-8
+```
+
+## Experiment walkthrough
+
+Start with the [step-by-step experiment guide](examples/experiments/README.md).
+Five supplied synthetic CSVs demonstrate clean decay, noise, background,
+mixtures, and invalid zero counts; the guide also uses both retained real
+Silver-111 series. Run all expected outcomes with:
+
+```sh
+python3 examples/experiments/run.py
+python3 examples/experiments/run.py --gpu
 ```
 
 ## Real measurement validation
