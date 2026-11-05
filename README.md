@@ -1,5 +1,12 @@
 # `nuclideid` — Bare-Metal Data Ingestion & GPU Decay Solver
 
+> **SQLite migration:** `create_isotopes_db` now imports the IAEA CSV into
+> `isotopes.sqlite3`, with validation and transactional replacement. See the
+> [importer documentation](x86_64/create_isotopes_db/README.md) for build commands,
+> schema, and tests. Later GPU stages still require migration from the old
+> binary format; the architecture and record layout below describe that older
+> pipeline. `fetch_isotopes` now uses libcurl for verified HTTPS.
+
 A minimalist, high-performance runtime pipeline engineered in pure x86_64 Assembly (AT&T syntax) and raw NVIDIA PTX (Parallel Thread Execution). The system ingests live nuclear data directly from the IAEA via raw network sockets, structures it in-memory, executes a parallel Bitonic Merge Sort on the GPU, and performs hardware-accelerated parameter inference (Adam Optimizer) on target decay curves.
 
 ---
