@@ -1,92 +1,67 @@
-# `nuclideid` — Bare-Metal Data Ingestion & GPU Decay Solver
+# nuclideid — isotope data ingestion and decay inference prototype
 
-> **SQLite migration:** `create_isotopes_db` now imports the IAEA CSV into
-> `isotopes.sqlite3`, with validation and transactional replacement. See the
-> [importer documentation](x86_64/create_isotopes_db/README.md) for build commands,
-> schema, and tests. Later GPU stages still require migration from the old
-> binary format; the architecture and record layout below describe that older
-> pipeline. `fetch_isotopes` now uses libcurl for verified HTTPS.
+The host tools use GNU x86-64 assembly (AT&T syntax). Isotope reference data is
+now stored in SQLite and selected into memory; the older decay-generation and
+inference components use NVIDIA PTX and are still being reviewed.
 
-A minimalist, high-performance runtime pipeline engineered in pure x86_64 Assembly (AT&T syntax) and raw NVIDIA PTX (Parallel Thread Execution). The system ingests live nuclear data directly from the IAEA via raw network sockets, structures it in-memory, executes a parallel Bitonic Merge Sort on the GPU, and performs hardware-accelerated parameter inference (Adam Optimizer) on target decay curves.
+## Current data pipeline
 
----
+```text
+IAEA HTTPS API
+    -> fetch_isotopes
+    -> isotopes.csv
+    -> create_isotopes_db
+    -> isotopes.sqlite3
+    -> isotope_catalog_load (SQL selection and ordering)
+    -> sorted records in host memory
+```
 
-## Architecture & Pipeline
+The active ingestion/catalog path does not generate an isotope `.bin` file.
+SQLite is the authoritative isotope database. A GPU consumer can copy the
+memory buffer directly to device memory when needed.
 
-[IAEA Web API] 
-      | (Raw TCP Socket Ingestion via Linux System Calls)
-      v
-[nuclidedb_generator.s] 
-      | (In-Memory CSV Parser & Fixed/Float Conversions)
-      v
-[bitonic_sort.ptx] 
-      | (GPU Kernel: 32-byte Vectorized Merge Sort)
-      v
-   [isotopes.db] (Persistent flat-file binary database on disk)
-      |
-      +------------------------+
-      v                        v
-  [data.bin]           [learn_decay.s] (Zero-Copy Double File mmap)
-  (Sample Data)                |
-      |                        v
-      +---------------> [adam_decay_solver.ptx]
-                        (GPU Kernel: 5000 Epochs Adam Gradient Descent)
-                               |
-                               v
-                        [Nuclide Identification Output]
+| Component | Current behavior |
+|---|---|
+| `fetch_isotopes` | Verified HTTPS via libcurl; validates the response and replaces the CSV after success |
+| `create_isotopes_db` | Validates the IAEA CSV and imports into SQLite in one transaction |
+| `isotopes_bitonic_sort` | Historical name for the new read-only SQLite catalog inspector and reusable memory loader |
+| `create_decay_data` | Older GPU prototype that generates synthetic measurements; not yet reviewed |
+| `learn_decay` | Older inference prototype; still requires migration from its obsolete isotope binary layout and numerical review |
 
----
+**The complete identification pipeline is not yet validated.** The current
+`learn_decay` cannot consume the new catalog until it links the loader and
+uses its record layout and dynamic count. Running the catalog inspector alone
+does not pass memory to a different executable.
 
-## Record Layout (isotopes.db)
+## Build the reviewed stages
 
-The database consists of a contiguous array of exactly 4096 records, each padded and aligned to a 32-byte boundary to guarantee optimal coalescing for GPU global memory transactions:
+On Debian/Ubuntu, development dependencies include GNU binutils, libc,
+`libcurl4-openssl-dev`, and `libsqlite3-dev` (SQLite 3.37 or newer). Python 3 with
+SQLite support runs the integration tests. The `sqlite3` CLI is optional.
 
-* Offset 0x00 - 0x03 [float32]: k_val -> Decay constant (lambda = ln(2) / T_1/2)
-* Offset 0x04 - 0x07 [uint32] : A     -> Mass number
-* Offset 0x08 - 0x0B [uint32] : Z     -> Atomic number (Protons)
-* Offset 0x0C - 0x1F [char[20]]: symbol -> Null-terminated ASCII string containing isotope identifier
+```sh
+make -C x86_64/fetch_isotopes MODE=release release
+make -C x86_64/create_isotopes_db release
+make -C x86_64/isotopes_bitonic_sort release
 
----
+./release/bin/x86_64/fetch_isotopes/fetch_isotopes
+./release/bin/x86_64/create_isotopes_db/create_isotopes_db
+./release/bin/x86_64/isotopes_bitonic_sort/isotopes_bitonic_sort
+```
 
-## System Requirements & Toolchain
+These stages run without CUDA. The root recursive build also includes the
+older GPU measurement generator, which still requires the CUDA toolchain.
+The bitonic-sort kernel has been retired from the build.
 
-* OS: GNU/Linux (Debian-based recommended, headless compute cluster or server).
-* Assembler & Linker: GNU as (configured for 64-bit AT&T syntax) and standard ld.
-* GPU Toolchain: NVIDIA CUDA Toolkit (requiring standalone /usr/bin/ptxas and /usr/bin/nvdisasm).
-* Hardware Target: NVIDIA GPU (Pascal Architecture sm_61 or newer).
+```sh
+make -C x86_64/create_isotopes_db MODE=release test
+make -C x86_64/isotopes_bitonic_sort MODE=release test
+```
 
----
+See the [SQLite importer documentation](x86_64/create_isotopes_db/README.md),
+[catalog API and memory layout](x86_64/isotopes_bitonic_sort/README.md), and
+[CSV audit](docs/isotope-csv-audit.md). Original files are retained as backups;
+`README.md.before-sqlite-catalog.bak` preserves the documentation preceding
+this catalog migration.
 
-## Compilation & Project Management
-
-The system leverages a recursive Makefile layout that automatically links appropriate assembler include paths (-I) and isolates environment builds into specific targets.
-
-### Assemble and Link Host & Kernels (Debug Mode)
-$ make
-
-### Complete Clean (Wipes objects, binaries, and temporary build caches)
-$ make clean
-
-### Build Artifacts:
-* Host Binaries: Placed inside ./bin/debug/x86_64/
-* GPU Cubins: Compiled into ./build/debug/kernels/
-* SASS Dumps: Disassembled GPU machine instructions (.sass) are dumped directly alongside .cubin targets for strict ISA inspection.
-
----
-
-## Runtime Execution
-
-### 1. Ingest Data and Generate Sorted Isotope Database
-This component initiates a raw socket to the IAEA, stream-parses the binary payload, spins up a bare-metal CUDA driver context, transfers the layout, sorts it via the GPU bitonic pipeline, and saves the binary image to disk:
-$ ./bin/debug/x86_64/nuclidedb_generator/nuclidedb_generator
-
-### 2. Run Decay Inference and Target Identification
-Maps both isotopes.db and your analytical tracking file (data.bin) through a zero-copy virtual memory space, launches the Adam decay engine on the GPU for 5000 convergence steps, and performs a native CPU binary search to instantly identify the isotope:
-$ ./bin/debug/x86_64/learn_decay/learn_decay
-
----
-
-## Guardrails & Hardware Validation
-
-CRITICAL - CUDA Initialization Sentinel Check:
-Both nuclidedb_generator and learn_decay incorporate a strict ABI-compliant driver checkpoint right after _start. If executed on a system missing the underlying NVIDIA driver stack or physical hardware nodes (such as testing on a development workstation instead of the production server cluster), the assembly code bypasses driver-level panic loops and terminates gracefully via exit-code 1, printing a high-visibility error message directly to stderr.
+License: Apache-2.0; see [LICENSE](LICENSE).

@@ -1,0 +1,109 @@
+.version 7.0
+.target sm_61
+.address_size 64
+
+.visible .entry isotopes_bitonic_sort(
+    .param .u64 db_ptr,
+    .param .u64 j,
+    .param .u64 k,
+    .param .u64 num_records
+)
+{
+    .reg .u64 %base_addr, %j64, %k64, %N64;
+    .reg .u32 %i, %ixj, %j32, %k32, %N32;
+    .reg .u64 %addr1, %addr2, %offset1_64, %offset2_64;
+    .reg .f64 %k1, %k2;
+    .reg .pred %p_dir, %p_swap, %p_valid;
+
+    ld.param.u64 %base_addr, [db_ptr];
+    ld.param.u64 %j64,       [j];
+    ld.param.u64 %k64,       [k];
+    ld.param.u64 %N64,       [num_records];
+
+    cvt.u32.u64 %j32, %j64;
+    cvt.u32.u64 %k32, %k64;
+    cvt.u32.u64 %N32, %N64;
+
+    .reg .u32 %ltid, %bid, %bdim;
+    mov.u32 %ltid, %tid.x;
+    mov.u32 %bid,  %ctaid.x;
+    mov.u32 %bdim, %ntid.x;
+    mad.lo.u32 %i, %bid, %bdim, %ltid;
+
+    xor.b32 %ixj, %i, %j32;
+
+    setp.ge.u32 %p_valid, %ixj, %i;
+    @!%p_valid bra EXIT;
+    setp.ge.u32 %p_valid, %ixj, %N32;
+    @%p_valid bra EXIT;
+
+    // --- GEWIJZIGD: Stride is nu 64 bytes conform create_isotopes_db.s ---
+    .reg .u32 %offset1, %offset2;
+    mad.lo.u32 %offset1, %i,   64, 0;
+    cvt.u64.u32 %offset1_64, %offset1;
+    add.u64 %addr1, %base_addr, %offset1_64;
+
+    mad.lo.u32 %offset2, %ixj, 64, 0;
+    cvt.u64.u32 %offset2_64, %offset2;
+    add.u64 %addr2, %base_addr, %offset2_64;
+
+    // --- GEWIJZIGD: De Sort_Key staat in de generator op offset 48! ---
+    ld.global.f64 %k1, [%addr1+48];
+    ld.global.f64 %k2, [%addr2+48];
+
+    .reg .u32 %and_k;
+    and.b32 %and_k, %i, %k32;
+    setp.eq.u32 %p_dir, %and_k, 0;
+
+    @%p_dir  setp.gt.f64 %p_swap, %k1, %k2;
+    @!%p_dir setp.lt.f64 %p_swap, %k1, %k2;
+
+    @!%p_swap bra EXIT;
+
+    // --- GEWIJZIGD: Registreer alle 8 quads om de volledige 64-byte matrix-rij te swappen ---
+    .reg .u64 %chunk1_a, %chunk1_b, %chunk1_c, %chunk1_d, %chunk1_e, %chunk1_f, %chunk1_g, %chunk1_h;
+    .reg .u64 %chunk2_a, %chunk2_b, %chunk2_c, %chunk2_d, %chunk2_e, %chunk2_f, %chunk2_g, %chunk2_h;
+
+    // Laad de volledige 64 bytes van Record 1
+    ld.global.u64 %chunk1_a, [%addr1];
+    ld.global.u64 %chunk1_b, [%addr1+8];
+    ld.global.u64 %chunk1_c, [%addr1+16];
+    ld.global.u64 %chunk1_d, [%addr1+24];
+    ld.global.u64 %chunk1_e, [%addr1+32];
+    ld.global.u64 %chunk1_f, [%addr1+40];
+    ld.global.u64 %chunk1_g, [%addr1+48]; // Dit is de f64 sort_key als u64 bits
+    ld.global.u64 %chunk1_h, [%addr1+56];
+
+    // Laad de volledige 64 bytes van Record 2
+    ld.global.u64 %chunk2_a, [%addr2];
+    ld.global.u64 %chunk2_b, [%addr2+8];
+    ld.global.u64 %chunk2_c, [%addr2+16];
+    ld.global.u64 %chunk2_d, [%addr2+24];
+    ld.global.u64 %chunk2_e, [%addr2+32];
+    ld.global.u64 %chunk2_f, [%addr2+40];
+    ld.global.u64 %chunk2_g, [%addr2+48];
+    ld.global.u64 %chunk2_h, [%addr2+56];
+
+    // Schrijf Record 2 naar Adres 1
+    st.global.u64 [%addr1],    %chunk2_a;
+    st.global.u64 [%addr1+8],  %chunk2_b;
+    st.global.u64 [%addr1+16], %chunk2_c;
+    st.global.u64 [%addr1+24], %chunk2_d;
+    st.global.u64 [%addr1+32], %chunk2_e;
+    st.global.u64 [%addr1+40], %chunk2_f;
+    st.global.u64 [%addr1+48], %chunk2_g;
+    st.global.u64 [%addr1+56], %chunk2_h;
+
+    // Schrijf Record 1 naar Adres 2
+    st.global.u64 [%addr2],    %chunk1_a;
+    st.global.u64 [%addr2+8],  %chunk1_b;
+    st.global.u64 [%addr2+16], %chunk1_c;
+    st.global.u64 [%addr2+24], %chunk1_d;
+    st.global.u64 [%addr2+32], %chunk1_e;
+    st.global.u64 [%addr2+40], %chunk1_f;
+    st.global.u64 [%addr2+48], %chunk1_g;
+    st.global.u64 [%addr2+56], %chunk1_h;
+
+EXIT:
+    ret;
+}

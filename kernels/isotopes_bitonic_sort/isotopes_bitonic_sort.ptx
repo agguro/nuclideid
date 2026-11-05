@@ -1,3 +1,5 @@
+// Retired reference kernel: SQLite now orders the catalog in host memory.
+// This file is no longer compiled by the active build.
 .version 7.0
 .target sm_61
 .address_size 64
