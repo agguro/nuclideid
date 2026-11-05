@@ -1,4 +1,4 @@
-# x86_64/create_decay_data/Makefile
+# x86_64/fetch_isotopes/Makefile
 
 CURRENT_DIR   := $(patsubst %/,%,$(dir $(abspath $(lastword $(MAKEFILE_LIST)))))
 NAME          := $(notdir $(CURRENT_DIR))
@@ -26,7 +26,7 @@ AS           := as
 LD           := ld
 
 ASFLAGS      := --64 -msyntax=att -mmnemonic=att -I$(BUILD_DIR) -I$(INC_DIR) -I$(LIB_DIR) -I$(KERNEL_DIR) -I$(KERNEL_BUILD)
-LDFLAGS      := -m elf_x86_64 -dynamic-linker /lib64/ld-linux-x86-64.so.2 -L/usr/local/cuda/lib64 -L/usr/lib/x86_64-linux-gnu -lcuda -lc -lcrypto -lssl
+LDFLAGS      := -m elf_x86_64 -dynamic-linker /lib64/ld-linux-x86-64.so.2 -L/usr/lib/x86_64-linux-gnu -lc -l:libcurl.so.4
 
 ifeq ($(MODE),debug)
     ASFLAGS    += -g

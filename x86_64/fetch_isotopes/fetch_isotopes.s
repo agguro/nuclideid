@@ -1,324 +1,319 @@
 /*
- * ============================================================================
- * Architecture : x86_64 | Linux SysV ABI | AT&T Syntax
- * File         : fetch_isotopes.s
- * Description  : Stream-Buffered HTTPS Downloader for IAEA Nuclide Data.
- * Usage        : ./fetch_isotopes [-o custom_output.csv]
- * ============================================================================
+ * IAEA ground-state CSV downloader. GNU x86-64 assembly, SysV ABI.
+ * Usage: fetch_isotopes [-o FILE] | --help
+ *
+ * libcurl owns HTTPS, certificate/hostname verification, HTTP framing and
+ * bounded network I/O. Downloads use a unique file beside the destination;
+ * rename publishes only a complete response with a recognizable CSV header
+ * and at least one data row. Existing output survives any earlier failure.
  */
-
 .global _start
 
+/* Stable libcurl public API option numbers (curl/curl.h). */
+.equ CURLOPT_WRITEDATA,        10001
+.equ CURLOPT_URL,              10002
+.equ CURLOPT_USERAGENT,        10018
+.equ CURLOPT_ERRORBUFFER,      10010
+.equ CURLOPT_FAILONERROR,      45
+.equ CURLOPT_TIMEOUT,          13
+.equ CURLOPT_CONNECTTIMEOUT,   78
+.equ CURLOPT_LOW_SPEED_LIMIT,  19
+.equ CURLOPT_LOW_SPEED_TIME,   20
+.equ CURLOPT_NOSIGNAL,         99
+.equ CURLOPT_SSL_VERIFYPEER,   64
+.equ CURLOPT_SSL_VERIFYHOST,   81
+.equ CURLOPT_PROTOCOLS,        181
+.equ CURLPROTO_HTTPS,          2
+
 .section .rodata
-    host_ssl:     .asciz "nds.iaea.org:443"
-    sni_name:     .asciz "nds.iaea.org"
-    default_csv:  .string "isotopes.csv"
-
-    http_request:
-        .ascii "GET /relnsd/v1/data?fields=ground_states&nuclides=all HTTP/1.1\r\n"
-        .ascii "Host: nds.iaea.org\r\n"
-        .ascii "User-Agent: curl/7.81.0\r\n"
-        .ascii "Accept: */*" 
-        .ascii "\r\n"
-        .ascii "Connection: close\r\n\r\n"
-    http_len = . - http_request
-
-    msg_conn:     .asciz "Connecting to nds.iaea.org:443 via TLS...\n"
-    msg_conn_l = . - msg_conn - 1   /* -1 om de impliciete \0 van .asciz te skippen */
-
-    msg_done:     .asciz "Download successfully completed and saved.\n"
-    msg_done_l = . - msg_done - 1   /* -1 om de impliciete \0 van .asciz te skippen */
-
-    err_io:       .ascii "\033[1;31m[ERROR]\033[0m Cannot open or create target CSV file.\n"
-    err_io_l = . - err_io
-
-    err_ssl:      .ascii "\033[1;31m[ERROR]\033[0m TLS Handshake or OpenSSL protocol constraints failed.\n"
-    err_ssl_l = . - err_ssl
-
-.section .data
-    .align 8
-    ctx:          .quad 0
-    bio:          .quad 0
-    ssl_ptr:      .quad 0
-    csv_fd:       .quad 0
-    csv_name:     .quad 0
+url:        .asciz "https://nds.iaea.org/relnsd/v1/data?fields=ground_states&nuclides=all"
+agent:      .asciz "nuclideid/1.0"
+default_csv:.asciz "isotopes.csv"
+opt_output: .asciz "-o"
+opt_help:   .asciz "--help"
+usage:      .asciz "Usage: fetch_isotopes [-o FILE] | --help\n"
+tmp_suffix: .asciz ".tmp.XXXXXX"
+mode_write: .asciz "w"
+mode_read:  .asciz "r"
+header_start: .asciz "z,n,symbol,"
+header_half:  .asciz ",half_life_sec,"
+msg_args:   .asciz "fetch_isotopes: invalid arguments; use --help"
+msg_init:   .asciz "fetch_isotopes: cannot initialize libcurl"
+msg_option: .asciz "fetch_isotopes: cannot configure libcurl"
+msg_alloc:  .asciz "fetch_isotopes: cannot allocate temporary filename"
+msg_temp:   .asciz "fetch_isotopes: cannot create temporary file"
+msg_stream: .asciz "fetch_isotopes: cannot open temporary stream"
+msg_write:  .asciz "fetch_isotopes: cannot flush or close downloaded file"
+msg_csv:    .asciz "fetch_isotopes: response is not a complete recognizable isotope CSV"
+msg_rename: .asciz "fetch_isotopes: cannot replace destination"
+fmt_error:  .asciz "%s\n"
+fmt_curl:   .asciz "fetch_isotopes: transfer failed: %s\n"
+fmt_done:   .asciz "Saved isotope CSV to %s\n"
 
 .section .bss
-    .align 16
-    net_buffer:   .space 4096
+.align 8
+destination: .zero 8
+temporary:   .zero 8
+stream:      .zero 8
+reader:      .zero 8
+handle:      .zero 8
+global_ready:.zero 8
+temp_created:.zero 8
+exit_status: .zero 8
+error_buffer:.zero 256
+line_buffer: .zero 16384
 
 .section .text
 _start:
-    # Set up safe frame pointer and align stack to 16 bytes (ABI compliant)
-    pushq   %rbp
-    movq    %rsp, %rbp
-    andq    $-16, %rsp
-    subq    $16, %rsp
+    /* Preserve initial argv before aligning for C calls. */
+    movq %rsp, %r12
+    andq $-16, %rsp
+    leaq default_csv(%rip), %rax
+    movq %rax, destination(%rip)
+    cmpq $1, (%r12)
+    je .Linit
+    cmpq $2, (%r12)
+    jne .Loutput_arg
+    movq 16(%r12), %rdi
+    leaq opt_help(%rip), %rsi
+    call strcmp@PLT
+    testl %eax, %eax
+    jne .Lbad_args
+    leaq usage(%rip), %rdi
+    call puts@PLT
+    jmp .Lcleanup
+.Loutput_arg:
+    cmpq $3, (%r12)
+    jne .Lbad_args
+    movq 16(%r12), %rdi
+    leaq opt_output(%rip), %rsi
+    call strcmp@PLT
+    testl %eax, %eax
+    jne .Lbad_args
+    movq 24(%r12), %rax
+    cmpb $0, (%rax)
+    je .Lbad_args
+    movq %rax, destination(%rip)
+.Linit:
+    movl $3, %edi                  /* CURL_GLOBAL_DEFAULT */
+    call curl_global_init@PLT
+    testl %eax, %eax
+    jne .Linit_error
+    movq $1, global_ready(%rip)
+    call curl_easy_init@PLT
+    testq %rax, %rax
+    je .Linit_error
+    movq %rax, handle(%rip)
 
-    # --- ABI Stack Parser for -o Override Flag ---
-    movq    8(%rbp), %r8                    # %r8 = argc (corrected offset)
-    leaq    24(%rbp), %rcx                  # %rcx = argv[1] (corrected offset)
-    leaq    default_csv(%rip), %rax
-    movq    %rax, csv_name(%rip)
+    movq destination(%rip), %rdi
+    call strlen@PLT
+    leaq 12(%rax), %rdi            /* suffix length 11 plus NUL */
+    call malloc@PLT
+    testq %rax, %rax
+    je .Lalloc_error
+    movq %rax, temporary(%rip)
+    movq %rax, %rdi
+    movq destination(%rip), %rsi
+    call strcpy@PLT
+    movq temporary(%rip), %rdi
+    leaq tmp_suffix(%rip), %rsi
+    call strcat@PLT
+    movq temporary(%rip), %rdi
+    call mkstemp@PLT               /* exclusive, mode 0600 */
+    testl %eax, %eax
+    js .Ltemp_error
+    movq $1, temp_created(%rip)
+    movl %eax, %r13d
+    movl %eax, %edi
+    leaq mode_write(%rip), %rsi
+    call fdopen@PLT
+    testq %rax, %rax
+    je .Lstream_error
+    movq %rax, stream(%rip)
 
-    cmpq    $1, %r8
-    jle     .L_init_network
+    /* Every option is checked. libcurl's default writer is fwrite. */
+.macro set_pointer option, label
+    movq handle(%rip), %rdi
+    movl $\option, %esi
+    leaq \label(%rip), %rdx
+    xorl %eax, %eax
+    call curl_easy_setopt@PLT
+    testl %eax, %eax
+    jne .Loption_error
+.endm
+.macro set_number option, value
+    movq handle(%rip), %rdi
+    movl $\option, %esi
+    movq $\value, %rdx
+    xorl %eax, %eax
+    call curl_easy_setopt@PLT
+    testl %eax, %eax
+    jne .Loption_error
+.endm
+    set_pointer CURLOPT_URL, url
+    set_pointer CURLOPT_USERAGENT, agent
+    set_pointer CURLOPT_ERRORBUFFER, error_buffer
+    set_number CURLOPT_FAILONERROR, 1
+    set_number CURLOPT_CONNECTTIMEOUT, 30
+    set_number CURLOPT_TIMEOUT, 120
+    set_number CURLOPT_LOW_SPEED_LIMIT, 1
+    set_number CURLOPT_LOW_SPEED_TIME, 30
+    set_number CURLOPT_NOSIGNAL, 1
+    set_number CURLOPT_SSL_VERIFYPEER, 1
+    set_number CURLOPT_SSL_VERIFYHOST, 2
+    set_number CURLOPT_PROTOCOLS, CURLPROTO_HTTPS
+    movq handle(%rip), %rdi
+    movl $CURLOPT_WRITEDATA, %esi
+    movq stream(%rip), %rdx
+    xorl %eax, %eax
+    call curl_easy_setopt@PLT
+    testl %eax, %eax
+    jne .Loption_error
+    movq handle(%rip), %rdi
+    call curl_easy_perform@PLT
+    testl %eax, %eax
+    jne .Ltransfer_error
 
-.L_arg_loop:
-    movq    (%rcx), %rdi
-    testq   %rdi, %rdi
-    jz      .L_init_network
+    /* Require HTTP 200; redirects and other successful statuses are rejected. */
+    movq handle(%rip), %rdi
+    movl $0x200002, %esi           /* CURLINFO_RESPONSE_CODE */
+    leaq exit_status(%rip), %rdx   /* scratch, reset before cleanup */
+    xorl %eax, %eax
+    call curl_easy_getinfo@PLT
+    testl %eax, %eax
+    jne .Lcsv_error
+    cmpq $200, exit_status(%rip)
+    jne .Lcsv_error
+    movq $0, exit_status(%rip)
+    movq stream(%rip), %rdi
+    call fclose@PLT               /* checks buffered writes as well */
+    movq $0, stream(%rip)
+    testl %eax, %eax
+    jne .Lwrite_error
 
-    movb    (%rdi), %al
-    cmpb    $45, %al                        # Check for '-' prefix
-    jne     .L_next_arg
+    movq temporary(%rip), %rdi
+    leaq mode_read(%rip), %rsi
+    call fopen@PLT
+    testq %rax, %rax
+    je .Lcsv_error
+    movq %rax, reader(%rip)
+    call read_line
+    testq %rax, %rax
+    je .Lcsv_error
+    leaq line_buffer(%rip), %rdi
+    leaq header_start(%rip), %rsi
+    movl $11, %edx
+    call strncmp@PLT
+    testl %eax, %eax
+    jne .Lcsv_error
+    leaq line_buffer(%rip), %rdi
+    leaq header_half(%rip), %rsi
+    call strstr@PLT
+    testq %rax, %rax
+    je .Lcsv_error
+    /* Require a complete header line and a nonempty, complete first row. */
+    call complete_line
+    testq %rax, %rax
+    je .Lcsv_error
+    call read_line
+    testq %rax, %rax
+    je .Lcsv_error
+    cmpb $'0', line_buffer(%rip)
+    jb .Lcsv_error
+    cmpb $'9', line_buffer(%rip)
+    ja .Lcsv_error
+    call complete_line
+    testq %rax, %rax
+    je .Lcsv_error
+    movq reader(%rip), %rdi
+    call fclose@PLT
+    movq $0, reader(%rip)
+    testl %eax, %eax
+    jne .Lcsv_error
+    movq temporary(%rip), %rdi
+    movq destination(%rip), %rsi
+    call rename@PLT
+    testl %eax, %eax
+    jne .Lrename_error
+    movq $0, temp_created(%rip)
+    leaq fmt_done(%rip), %rdi
+    movq destination(%rip), %rsi
+    xorl %eax, %eax
+    call printf@PLT
+    jmp .Lcleanup
 
-    movb    1(%rdi), %al
-    cmpb    $111, %al                       # Check for 'o' override flag
-    jne     .L_next_arg
+/* Helpers enter with rsp % 16 == 8. Tail calls preserve that ABI. */
+read_line:
+    leaq line_buffer(%rip), %rdi
+    movl $16384, %esi
+    movq reader(%rip), %rdx
+    jmp fgets@PLT
+complete_line:
+    leaq line_buffer(%rip), %rdi
+    movl $10, %esi
+    jmp strchr@PLT
 
-    addq    $8, %rcx
-    movq    (%rcx), %rax
-    testq   %rax, %rax
-    jz      .L_init_network
-    movq    %rax, csv_name(%rip)
-
-.L_next_arg:
-    addq    $8, %rcx
-    jmp     .L_arg_loop
-
-.L_init_network:
-    # Print connection log notification (Hardcoding hersteld naar macro!)
-    movq    $1, %rax
-    movq    $1, %rdi
-    leaq    msg_conn(%rip), %rsi
-    movq    $msg_conn_l, %rdx
-    syscall
-
-    # Open target destination file (O_RDWR|O_CREAT|O_TRUNC = 0x242)
-    movq    $2, %rax                        # sys_open
-    movq    csv_name(%rip), %rdi
-    movq    $0x242, %rsi
-    movq    $0644, %rdx
-    syscall
-    js      error_io_exit
-    movq    %rax, csv_fd(%rip)
-
-    # --- OpenSSL Secure Pipeline Bootstrap ---
-    xorq    %rdi, %rdi
-    xorq    %rsi, %rsi
-    call    OPENSSL_init_ssl@PLT
-    call    TLS_client_method@PLT
-    movq    %rax, %rdi
-    call    SSL_CTX_new@PLT
-    testq   %rax, %rax
-    jz      error_ssl_exit
-    movq    %rax, ctx(%rip)
-
-    # CRITICAL RESTRICTION BYPASS: Disable strict peer certificate verification
-    movq    ctx(%rip), %rdi
-    xorq    %rsi, %rsi                      # SSL_VERIFY_NONE = 0
-    xorq    %rdx, %rdx                      # NULL Callback
-    call    SSL_CTX_set_verify@PLT
-
-    movq    ctx(%rip), %rdi
-    call    BIO_new_ssl_connect@PLT
-    testq   %rax, %rax
-    jz      error_ssl_exit
-    movq    %rax, bio(%rip)
-
-    movq    bio(%rip), %rdi
-    movl    $100, %esi                      # BIO_C_SET_CONNECT
-    xorq    %rdx, %rdx
-    leaq    host_ssl(%rip), %rcx
-    call    BIO_ctrl@PLT
-
-    movq    bio(%rip), %rdi
-    movl    $110, %esi                      # BIO_C_GET_SSL
-    xorq    %rdx, %rdx
-    leaq    ssl_ptr(%rip), %rcx
-    call    BIO_ctrl@PLT
-
-    movq    ssl_ptr(%rip), %rdi
-    movl    $55, %esi                       # SSL_CTRL_SET_TLSEXT_HOSTNAME
-    movq    $0, %rdx                        # Nametype = host_name (0)
-    leaq    sni_name(%rip), %rcx
-    call    SSL_ctrl@PLT
-
-    # Execute dynamic TLS Handshake
-    movq    bio(%rip), %rdi
-    movl    $101, %esi                      # BIO_C_DO_STATE_MACHINE
-    xorq    %rdx, %rdx
-    xorq    %rcx, %rcx
-    call    BIO_ctrl@PLT
-    testq   %rax, %rax
-    jle     error_ssl_exit
-
-    # Transmit HTTP request payload
-    movq    bio(%rip), %rdi
-    leaq    http_request(%rip), %rsi
-    movq    $http_len, %rdx
-    call    BIO_write@PLT
-
-    xorq    %r15, %r15                      # State 0: Header scan mode
-    xorq    %rbx, %rbx                      # Reset chunk processing counters
-
-FETCH_BLOCK:
-    leaq    net_buffer(%rip), %rsi
-    movq    bio(%rip), %rdi
-    movq    $4096, %rdx
-    call    BIO_read@PLT
-    testq   %rax, %rax
-    jle     NET_DONE                        # End of transmission stream reached
-
-    leaq    net_buffer(%rip), %r12
-    movq    %r12, %r11
-    addq    %rax, %r11                      # %r11 = network block buffer end
-
-PROCESS_BYTES:
-    cmpq    %r11, %r12
-    jae     FETCH_BLOCK
-
-    movzbq  (%r12), %rax
-    incq    %r12
-
-    cmpq    $0, %r15
-    je      STATE_0
-    cmpq    $1, %r15
-    je      STATE_1
-    cmpq    $2, %r15
-    je      STATE_2
-    cmpq    $3, %r15
-    je      STATE_3
-    jmp     PROCESS_BYTES
-
-STATE_0:
-    # --- Skip HTTP Headers via Sequential Break Detection ---
-    cmpb    $13, %al
-    je      PROCESS_BYTES
-    cmpb    $10, %al
-    jne     .L_reset_h
-    incq    %rbx
-    cmpq    $2, %rbx
-    jne     PROCESS_BYTES
-    movq    $1, %r15                        # Headers consumed -> Proceed to chunk size
-    xorq    %rbx, %rbx
-    jmp     PROCESS_BYTES
-
-.L_reset_h:
-    xorq    %rbx, %rbx
-    jmp     PROCESS_BYTES
-
-STATE_1:
-    # --- Parse Chunked Payload Hex Size Flags ---
-    cmpb    $13, %al
-    je      PROCESS_BYTES
-    cmpb    $10, %al
-    je      .L_hex_done
-
-    shlq    $4, %rbx
-    cmpb    $58, %al
-    jl      .L_num
-    cmpb    $97, %al
-    jl      .L_caps
-    subb    $87, %al
-    jmp     .L_merge
-
-.L_caps:
-    subb    $55, %al
-    jmp     .L_merge
-
-.L_num:
-    subb    $48, %al
-
-.L_merge:
-    movzbq  %al, %rax
-    addq    %rax, %rbx
-    jmp     PROCESS_BYTES
-
-.L_hex_done:
-    testq   %rbx, %rbx
-    jz      NET_DONE                        # Terminal empty chunk -> Stream end
-    movq    $2, %r15                        # Proceed to State 2: Data stream extraction
-    jmp     PROCESS_BYTES
-
-STATE_2:
-    # --- Ingest Active Character Byte Straight to CSV Storage ---
-    pushq   %rbx
-    pushq   %rax
-    pushq   %rcx
-    pushq   %r11
-
-    movq    $1, %rax                        # sys_write
-    movq    csv_fd(%rip), %rdi
-    leaq    16(%rsp), %rsi                  # Map exact pointer position on stack frame
-    movq    $1, %rdx
-    syscall
-
-    popq    %r11                            # Recover boundary limits untouched
-    popq    %rcx
-    popq    %rax
-    popq    %rbx
-
-    decq    %rbx
-    jnz     PROCESS_BYTES
-    movq    $3, %r15                        # Chunk boundary reached -> Skip trailer
-    jmp     PROCESS_BYTES
-
-STATE_3:
-    # --- Consume Trailing CR/LF Break Frames ---
-    cmpb    $10, %al
-    jne     PROCESS_BYTES
-    movq    $1, %r15                        # Recycle state back to loop detection
-    xorq    %rbx, %rbx
-    jmp     PROCESS_BYTES
-
-NET_DONE:
-    # Safe context disposal
-    movq    bio(%rip), %rdi
-    call    BIO_free_all@PLT
-    movq    ctx(%rip), %rdi
-    call    SSL_CTX_free@PLT
-
-    movq    $3, %rax                        # sys_close
-    movq    csv_fd(%rip), %rdi
-    syscall
-
-    # Print success notice to standard output (Hardcoding hersteld naar macro!)
-    movq    $1, %rax
-    movq    $1, %rdi
-    leaq    msg_done(%rip), %rsi
-    movq    $msg_done_l, %rdx
-    syscall
-
-    # Return frame context back to parent environment coordinates
-    movq    %rbp, %rsp
-    popq    %rbp
-    movq    $60, %rax                       # sys_exit Exit(0)
-    xorq    %rdi, %rdi
-    syscall
-
-error_io_exit:
-    movq    $1, %rax                        # sys_write stderr
-    movq    $2, %rdi
-    leaq    err_io(%rip), %rsi
-    movq    $err_io_l, %rdx
-    syscall
-    jmp     .L_terminate
-
-error_ssl_exit:
-    movq    $1, %rax                        # sys_write stderr
-    movq    $2, %rdi
-    leaq    err_ssl(%rip), %rsi
-    movq    $err_ssl_l, %rdx
-    syscall
-
-.L_terminate:
-    movq    %rbp, %rsp
-    popq    %rbp
-    movq    $60, %rax                       # Exit(1)
-    movq    $1, %rdi
-    syscall
-
-.size _start, . - _start
+.Lbad_args:     leaq msg_args(%rip), %rsi; jmp .Lerror
+.Linit_error:   leaq msg_init(%rip), %rsi; jmp .Lerror
+.Loption_error: leaq msg_option(%rip), %rsi; jmp .Lerror
+.Lalloc_error:  leaq msg_alloc(%rip), %rsi; jmp .Lerror
+.Ltemp_error:   leaq msg_temp(%rip), %rsi; jmp .Lerror
+.Lstream_error:
+    movl %r13d, %edi
+    call close@PLT
+    leaq msg_stream(%rip), %rsi
+    jmp .Lerror
+.Lwrite_error:  leaq msg_write(%rip), %rsi; jmp .Lerror
+.Lcsv_error:    leaq msg_csv(%rip), %rsi; jmp .Lerror
+.Lrename_error: leaq msg_rename(%rip), %rsi; jmp .Lerror
+.Ltransfer_error:
+    movl %eax, %edi
+    call curl_easy_strerror@PLT
+    movq %rax, %rdx
+    cmpb $0, error_buffer(%rip)
+    je .Lcurl_message
+    leaq error_buffer(%rip), %rdx
+.Lcurl_message:
+    movq stderr(%rip), %rdi
+    leaq fmt_curl(%rip), %rsi
+    xorl %eax, %eax
+    call fprintf@PLT
+    jmp .Lfailed
+.Lerror:
+    movq %rsi, %rdx
+    movq stderr(%rip), %rdi
+    leaq fmt_error(%rip), %rsi
+    xorl %eax, %eax
+    call fprintf@PLT
+.Lfailed:
+    movq $1, exit_status(%rip)
+.Lcleanup:
+    movq handle(%rip), %rdi
+    testq %rdi, %rdi
+    je .Lclose_stream
+    call curl_easy_cleanup@PLT
+.Lclose_stream:
+    movq stream(%rip), %rdi
+    testq %rdi, %rdi
+    je .Lclose_reader
+    call fclose@PLT
+.Lclose_reader:
+    movq reader(%rip), %rdi
+    testq %rdi, %rdi
+    je .Lremove_temp
+    call fclose@PLT
+.Lremove_temp:
+    cmpq $0, temp_created(%rip)
+    je .Lfree_temp
+    movq temporary(%rip), %rdi
+    call unlink@PLT
+.Lfree_temp:
+    movq temporary(%rip), %rdi
+    call free@PLT
+    cmpq $0, global_ready(%rip)
+    je .Lexit
+    call curl_global_cleanup@PLT
+.Lexit:
+    movl exit_status(%rip), %edi
+    call exit@PLT                 /* flush C stdio before terminating */
 .section .note.GNU-stack,"",@progbits
