@@ -6,17 +6,17 @@ endif
 
 SUBDIRS := kernels x86_64
 
-# Het Linux-fundament: standaard is ALLES release
+# Default all Linux builds to release mode
 MODE ?= release
 export MODE
 
 all: release
 
-# Dwing de juiste modus af op basis van het gekozen target
+# Select the build mode from the requested target
 debug: export MODE := debug
 release: export MODE := release
 
-# Generieke orchestratie voor reguliere acties
+# Forward standard actions to each component
 debug release test install:
 	@for dir in $(SUBDIRS); do \
 		if [ -d $$dir ] && [ -f $$dir/Makefile ]; then \

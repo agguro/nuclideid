@@ -38,5 +38,3 @@ This generator is for algorithm tests. It does not simulate background,
 counting noise, mixtures, or detector physics. Independently generated Python
 measurements are also used to test inference so shared generator/fitter errors
 cannot alone establish correctness.
-
-Original source, kernel, and Makefiles are retained as `.before-decay.bak`.

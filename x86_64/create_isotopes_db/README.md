@@ -87,7 +87,7 @@ now calls that loader directly; no binary isotope database is generated.
 SQLite files are queried through SQLite, not mapped as packed GPU records.
 
 The catalog loader now selects suitable rows and builds a packed host-memory
-buffer; see [its API documentation](../isotopes_bitonic_sort/README.md).
+buffer; see [its API documentation](../isotope_catalog/README.md).
 The inference executable links and calls that loader in its own process.
 For an initial set of unqualified measured candidates:
 
@@ -102,6 +102,3 @@ Qualified values represent bounds or approximate measurements and require an
 explicit matching policy. Stable and unknown records should not enter a fit
 that assumes positive exponential decay. Sorting 3,386 database records can be
 handled by SQL; GPU work can focus on measurement inference.
-
-Original converter files are preserved as `create_isotopes_db.s.bak` and
-`Makefile.bak` beside the rewritten files.

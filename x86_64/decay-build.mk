@@ -38,7 +38,7 @@ $(BUILD_DIR)/$(NAME).o: $(CURRENT_DIR)/$(NAME).s $(CUBIN) $(SRC_ROOT)/x86_64/inc
 $(BUILD_DIR)/%.o: $(SRC_ROOT)/x86_64/lib/%.s $(SRC_ROOT)/x86_64/include/decay.inc
 	@mkdir -p $(BUILD_DIR)
 	$(AS) $(ASFLAGS) $< -o $@
-$(BUILD_DIR)/isotope_catalog.o: $(SRC_ROOT)/x86_64/isotopes_bitonic_sort/isotope_catalog.s $(SRC_ROOT)/x86_64/include/isotope_catalog.inc
+$(BUILD_DIR)/isotope_catalog.o: $(SRC_ROOT)/x86_64/isotope_catalog/isotope_catalog.s $(SRC_ROOT)/x86_64/include/isotope_catalog.inc
 	@mkdir -p $(BUILD_DIR)
 	$(AS) $(ASFLAGS) $< -o $@
 $(TARGET): $(OBJECTS)

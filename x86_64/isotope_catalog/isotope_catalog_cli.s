@@ -1,4 +1,4 @@
-/* Historical command name, new role: inspect the SQLite -> RAM catalog.
+/* Inspect the SQLite -> RAM catalog.
  * No .bin input/output, CUDA initialization, padding, or GPU sorting.
  * Link isotope_catalog.o into inference to retain the buffer in that process.
  */
@@ -8,11 +8,11 @@
 default_db: .asciz "isotopes.sqlite3"
 help_flag: .asciz "--help"
 list_flag: .asciz "--list"
-usage: .asciz "Usage: isotopes_bitonic_sort [DATABASE] [--list]\nLoads unqualified measured isotopes from SQLite into sorted host memory.\nNo database changes or isotope .bin files. --list prints the loaded records."
+usage: .asciz "Usage: isotope_catalog [DATABASE] [--list]\nLoads unqualified measured isotopes from SQLite into sorted host memory.\nNo database changes or isotope .bin files. --list prints the loaded records."
 summary: .asciz "Loaded %lu measured isotopes (%lu bytes) from %s into host memory.\n"
 list_header: .asciz "z\tn\ta\tsymbol\thalf_life_seconds\tdecay_constant"
 record_format: .asciz "%lu\t%lu\t%lu\t%s\t%.17g\t%.17g\n"
-error_format: .asciz "isotopes_bitonic_sort: %s\n"
+error_format: .asciz "isotope_catalog: %s\n"
 bad_args: .asciz "invalid arguments; use --help (-o and .bin files are no longer supported)"
 .section .bss
 .align 8

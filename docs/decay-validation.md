@@ -10,7 +10,6 @@ The reference CSV's extraction date is 2023-10-18.
 - SQLite catalog: 15 integration tests pass.
 - Decay generation/inference: 27 tests pass with hardware tests enabled in
   both debug and release builds, on NVIDIA GeForce GTX 1060 6GB (compute 6.1).
-- All nine `.before-decay.bak` backups match their original Git HEAD files.
 - Whitespace checks pass. No generated database, measurements, object files,
   or CUBINs are intended as source changes.
 

@@ -1,7 +1,6 @@
-# SQLite catalog loader (formerly GPU bitonic sorter)
+# SQLite catalog loader
 
-The command name `isotopes_bitonic_sort` is retained for the recursive build.
-Its new job is to load sorted isotope candidates from SQLite into host memory.
+The `isotope_catalog` command loads sorted isotope candidates from SQLite into host memory.
 It does not read or generate `isotopes.bin`, modify the database, pad records,
 initialize CUDA, or sort on the GPU. The old host source, Makefiles, and PTX
 are backed up alongside the corresponding files. The old kernel is retired
@@ -13,11 +12,11 @@ Requires GNU binutils, libc, and libsqlite3-dev (the same dependencies as the
 SQLite importer). No CUDA toolkit or NVIDIA driver is required for this stage.
 
 ```sh
-make -C x86_64/isotopes_bitonic_sort debug
-make -C x86_64/isotopes_bitonic_sort release
-make -C x86_64/isotopes_bitonic_sort MODE=debug test
-./release/bin/x86_64/isotopes_bitonic_sort/isotopes_bitonic_sort
-./release/bin/x86_64/isotopes_bitonic_sort/isotopes_bitonic_sort other.sqlite3 --list
+make -C x86_64/isotope_catalog debug
+make -C x86_64/isotope_catalog release
+make -C x86_64/isotope_catalog MODE=debug test
+./release/bin/x86_64/isotope_catalog/isotope_catalog
+./release/bin/x86_64/isotope_catalog/isotope_catalog other.sqlite3 --list
 ```
 
 The default path is `isotopes.sqlite3`. `--list` prints the actual loaded buffer

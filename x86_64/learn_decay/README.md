@@ -124,5 +124,3 @@ NVIDIA Compute Sanitizer 2022.3 was also attempted, but it terminated before
 instrumenting the first CUDA call in this environment. Consequently, memory
 and synchronization sanitizer checks are not claimed as passed; actual GPU
 execution and numeric comparisons above are the completed hardware checks.
-
-Original host and kernel sources are preserved as `.before-decay.bak` files.

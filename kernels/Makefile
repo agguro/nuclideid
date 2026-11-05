@@ -9,7 +9,7 @@ SUBDIRS  := $(filter-out . ..,$(ALL_DIRS))
 
 all: release
 
-# Alleen de acties doorsturen die de kernels daadwerkelijk ondersteunen
+# Forward only actions supported by the kernels
 debug release clean test:
 	@for dir in $(SUBDIRS); do \
 		if [ -d $$dir ] && [ -f $$dir/Makefile ]; then \
@@ -17,7 +17,7 @@ debug release clean test:
 		fi \
 	done
 
-# Vang install en uninstall hier lokaal geruisloos op zonder sub-Makefiles aan te roepen
+# Handle installation locally without invoking kernel Makefiles
 install:
 	@true
 

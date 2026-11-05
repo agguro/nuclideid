@@ -32,7 +32,7 @@ matching uses the SQLite catalog in host memory.
 |---|---|
 | `fetch_isotopes` | Verified HTTPS via libcurl; validates the response and replaces the CSV after success |
 | `create_isotopes_db` | Validates the IAEA CSV and imports into SQLite in one transaction |
-| `isotopes_bitonic_sort` | Historical name for the new read-only SQLite catalog inspector and reusable memory loader |
+| `isotope_catalog` | Read-only SQLite catalog inspector and reusable memory loader |
 | `create_decay_data` | Checked GPU exponential generator; CSV output and independent CPU reference |
 | `learn_decay` | Fits all positive CSV samples, loads SQLite candidates, and reports matches within an explicit tolerance |
 
@@ -52,11 +52,11 @@ SQLite support runs the integration tests. The `sqlite3` CLI is optional.
 ```sh
 make -C x86_64/fetch_isotopes MODE=release release
 make -C x86_64/create_isotopes_db release
-make -C x86_64/isotopes_bitonic_sort release
+make -C x86_64/isotope_catalog release
 
 ./release/bin/x86_64/fetch_isotopes/fetch_isotopes
 ./release/bin/x86_64/create_isotopes_db/create_isotopes_db
-./release/bin/x86_64/isotopes_bitonic_sort/isotopes_bitonic_sort
+./release/bin/x86_64/isotope_catalog/isotope_catalog
 ```
 
 The first three stages run without CUDA. The root recursive build now also
@@ -66,16 +66,14 @@ reference mode does not initialize the GPU. The bitonic-sort kernel is retired.
 
 ```sh
 make -C x86_64/create_isotopes_db MODE=release test
-make -C x86_64/isotopes_bitonic_sort MODE=release test
+make -C x86_64/isotope_catalog MODE=release test
 make -C x86_64/learn_decay MODE=release test
 NUCLIDEID_TEST_GPU=1 make -C x86_64/learn_decay MODE=release test
 ```
 
 See the [SQLite importer documentation](x86_64/create_isotopes_db/README.md),
-[catalog API and memory layout](x86_64/isotopes_bitonic_sort/README.md), and
-[CSV audit](docs/isotope-csv-audit.md). Original files are retained as backups;
-`README.md.before-sqlite-catalog.bak` preserves the documentation preceding
-this catalog migration.
+[catalog API and memory layout](x86_64/isotope_catalog/README.md), and
+[CSV audit](docs/isotope-csv-audit.md).
 
 A synthetic Co-60 example, using the current SQLite snapshot:
 
@@ -110,8 +108,5 @@ python3 datasets/ag111/prepare.py
 python3 datasets/ag111/validate.py --gpu
 python3 tests/test_ag111_dataset.py
 ```
-
-Original generation/inference files and preceding documentation are backed up
-as `.before-decay.bak` files.
 
 License: Apache-2.0; see [LICENSE](LICENSE).

@@ -1,12 +1,12 @@
-# SQLite catalog loader. The name is retained for existing build orchestration.
+# SQLite catalog loader and inspector.
 CURRENT_DIR := $(patsubst %/,%,$(dir $(abspath $(lastword $(MAKEFILE_LIST)))))
 SRC_ROOT := $(abspath $(CURRENT_DIR)/../..)
 MODE ?= release
 PREFIX ?= /usr/local/bin
-BIN_DIR = $(SRC_ROOT)/$(MODE)/bin/x86_64/isotopes_bitonic_sort
-BUILD_DIR = $(SRC_ROOT)/$(MODE)/build/x86_64/isotopes_bitonic_sort
-TARGET = $(BIN_DIR)/isotopes_bitonic_sort
-OBJ = $(BUILD_DIR)/isotopes_bitonic_sort.o
+BIN_DIR = $(SRC_ROOT)/$(MODE)/bin/x86_64/isotope_catalog
+BUILD_DIR = $(SRC_ROOT)/$(MODE)/build/x86_64/isotope_catalog
+TARGET = $(BIN_DIR)/isotope_catalog
+OBJ = $(BUILD_DIR)/isotope_catalog_cli.o
 CATALOG_OBJ = $(BUILD_DIR)/isotope_catalog.o
 CATALOG_SHARED = $(BUILD_DIR)/libisotope_catalog.so
 CATALOG_STATIC = $(BUILD_DIR)/libisotope_catalog.a
@@ -38,9 +38,9 @@ $(CATALOG_STATIC): $(CATALOG_OBJ)
 test: build
 	python3 $(SRC_ROOT)/tests/test_isotope_catalog.py $(TARGET) $(CATALOG_SHARED)
 install: build
-	install -D $(TARGET) $(PREFIX)/$(notdir $(SRC_ROOT))/isotopes_bitonic_sort
+	install -D $(TARGET) $(PREFIX)/$(notdir $(SRC_ROOT))/isotope_catalog
 uninstall:
-	rm -f $(PREFIX)/$(notdir $(SRC_ROOT))/isotopes_bitonic_sort
+	rm -f $(PREFIX)/$(notdir $(SRC_ROOT))/isotope_catalog
 clean:
 	rm -rf $(BUILD_DIR) $(BIN_DIR)
 .PHONY: all debug release build test install uninstall clean
